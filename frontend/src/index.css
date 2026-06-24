@@ -1,0 +1,223 @@
+@import "tailwindcss";
+
+/* ── FOB Design Tokens ─────────────────────────────────────────────────────────
+   Single source of truth for all colours and spacing.
+   Tailwind utilities (bg-fob-bg, text-fob-orange, etc.) resolve through these.
+   Swap skins by setting data-skin="<name>" on <html>.
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/* Global defaults — not skin-specific, persist across skin switches */
+:root {
+  --fob-font-scale: 1;
+}
+
+/* Forge Dark (default) */
+:root,
+[data-skin="forge-dark"] {
+  --fob-bg:            #0A0A0F;
+  --fob-surface:       #1A1A24;
+  --fob-surface-hover: #252533;
+  --fob-border:        rgba(255, 153, 0, 0.25);
+
+  --fob-accent:        #FF9900;
+  --fob-accent-text:   #000000;
+  --fob-accent-glow:   rgba(255, 153, 0, 0.3);
+  --fob-active:        #00AADD;
+
+  --fob-text:          #E8E8EC;
+  --fob-text-dim:      #888899;
+
+  --fob-green:         #33FF33;
+  --fob-red:           #FF3333;
+  --fob-yellow:        #FFCC00;
+  --fob-blue:          #5B92E5;
+}
+
+/* Forge Light */
+[data-skin="forge-light"] {
+  --fob-bg:            #F0F0F5;
+  --fob-surface:       #FFFFFF;
+  --fob-surface-hover: #E8E8EF;
+  --fob-border:        rgba(200, 120, 0, 0.3);
+
+  --fob-accent:        #CC7700;
+  --fob-accent-text:   #000000;
+  --fob-accent-glow:   rgba(204, 119, 0, 0.2);
+  --fob-active:        #0077AA;
+
+  --fob-text:          #1A1A24;
+  --fob-text-dim:      #666677;
+
+  --fob-green:         #228822;
+  --fob-red:           #CC2222;
+  --fob-yellow:        #AA8800;
+  --fob-blue:          #2A6CBF;
+}
+
+/* LCARS — authentic TNG/DS9/VOY multi-colour palette */
+[data-skin="lcars"] {
+  --fob-bg:            #000000;
+  --fob-surface:       #0D0800;
+  --fob-surface-hover: #1A1000;
+  --fob-border:        rgba(204, 153, 255, 0.35);
+
+  --fob-accent:        #FF9900;   /* primary orange frame colour */
+  --fob-accent-text:   #000000;
+  --fob-accent-glow:   rgba(255, 153, 0, 0.35);
+  --fob-active:        #CC99FF;   /* purple/violet — secondary LCARS colour */
+
+  --fob-text:          #FFCC99;   /* warm off-white — LCARS readout text */
+  --fob-text-dim:      #996633;   /* muted ochre */
+
+  --fob-green:         #99CC33;   /* LCARS system-ok green */
+  --fob-red:           #FF6666;   /* LCARS alert salmon */
+  --fob-yellow:        #FFCC00;   /* LCARS caution yellow */
+  --fob-blue:          #9999FF;
+
+  /* extra LCARS accent vars for future use */
+  --fob-lcars-purple:  #CC99FF;
+  --fob-lcars-blue:    #9999FF;
+  --fob-lcars-salmon:  #FF6666;
+  --fob-lcars-tan:     #FFCC99;
+}
+
+/* Terminal */
+[data-skin="terminal"] {
+  --fob-bg:            #0D1117;
+  --fob-surface:       #161B22;
+  --fob-surface-hover: #21262D;
+  --fob-border:        rgba(51, 255, 51, 0.25);
+
+  --fob-accent:        #33FF33;
+  --fob-accent-text:   #000000;
+  --fob-accent-glow:   rgba(51, 255, 51, 0.2);
+  --fob-active:        #33FF33;
+
+  --fob-text:          #33FF33;
+  --fob-text-dim:      #228822;
+
+  --fob-green:         #33FF33;
+  --fob-red:           #FF3333;
+  --fob-yellow:        #FFFF33;
+  --fob-blue:          #5B92E5;
+}
+
+/* Midnight */
+[data-skin="midnight"] {
+  --fob-bg:            #050510;
+  --fob-surface:       #0D0D20;
+  --fob-surface-hover: #15152E;
+  --fob-border:        rgba(100, 100, 255, 0.3);
+
+  --fob-accent:        #6666FF;
+  --fob-accent-text:   #FFFFFF;
+  --fob-accent-glow:   rgba(100, 100, 255, 0.3);
+  --fob-active:        #AA66FF;
+
+  --fob-text:          #CCCCFF;
+  --fob-text-dim:      #6666AA;
+
+  --fob-green:         #66FF99;
+  --fob-red:           #FF6666;
+  --fob-yellow:        #FFFF66;
+  --fob-blue:          #8888FF;
+}
+
+/* ── Tailwind token bridge ──────────────────────────────────────────────────── */
+@theme {
+  --color-fob-bg:            var(--fob-bg);
+  --color-fob-surface:       var(--fob-surface);
+  --color-fob-surface-hover: var(--fob-surface-hover);
+  --color-fob-border:        var(--fob-border);
+  --color-fob-orange:        var(--fob-accent);
+  --color-fob-accent-text:   var(--fob-accent-text);
+  --color-fob-orange-glow:   var(--fob-accent-glow);
+  --color-fob-active:        var(--fob-active);
+  --color-fob-text:          var(--fob-text);
+  --color-fob-text-dim:      var(--fob-text-dim);
+  --color-fob-green:         var(--fob-green);
+  --color-fob-red:           var(--fob-red);
+  --color-fob-yellow:        var(--fob-yellow);
+  --color-fob-blue:          var(--fob-blue);
+  --color-fob-accent:        var(--fob-accent);
+}
+
+/* ── Settings plugin utilities ──────────────────────────────────────────────── */
+@layer components {
+  .settings-label {
+    @apply text-[10px] uppercase text-fob-text-dim font-mono font-bold tracking-widest mb-2;
+  }
+  .settings-card {
+    @apply bg-fob-bg border border-fob-border rounded-lg p-4;
+  }
+  .settings-key {
+    @apply text-xs font-mono text-fob-text;
+  }
+  .settings-val {
+    @apply text-xs font-mono text-fob-text w-12 text-right;
+  }
+  .settings-input {
+    @apply bg-fob-surface text-fob-text font-mono text-xs p-2 border border-fob-border rounded outline-none focus:border-fob-orange transition-colors;
+  }
+  .settings-select {
+    @apply bg-fob-surface text-fob-text font-mono text-xs p-1.5 border border-fob-border rounded outline-none focus:border-fob-orange;
+  }
+  .settings-check {
+    @apply accent-fob-orange w-3.5 h-3.5 flex-shrink-0;
+  }
+}
+
+/* ── Base reset ─────────────────────────────────────────────────────────────── */
+@layer base {
+  html, body, #root {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+  }
+
+  body {
+    background: var(--fob-bg);
+    color: var(--fob-text);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: calc(1rem * var(--fob-font-scale, 1));
+    -webkit-font-smoothing: antialiased;
+  }
+
+  #root {
+    display: flex;
+    flex-direction: column;
+  }
+}
+
+/* ── Plugin Layout Safe Zones ─────────────────────────────────────────────────────
+   Prevent plugin UI from being hidden behind the expanding FOB header
+   ──────────────────────────────────────────────────────────────────────────── */
+@layer utilities {
+  /* Safe area for FOB header (top-right corner) */
+  .plugin-safe-area {
+    padding-top: 1rem; /* Space for collapsed FOB button */
+    padding-right: 8rem; /* Space for expanded FOB header */
+  }
+  
+  /* Plugin container with safe margins */
+  .plugin-container {
+    margin-top: 0.5rem;
+    margin-right: 6rem;
+    height: calc(100vh - 1rem);
+  }
+  
+  /* Specific safe zones for common plugin UI elements */
+  .plugin-header {
+    padding-right: 2rem; /* Avoid FOB header overlap */
+  }
+  
+  .plugin-controls {
+    padding-right: 1rem;
+  }
+  
+  .plugin-status-bar {
+    padding-right: 1rem;
+  }
+}

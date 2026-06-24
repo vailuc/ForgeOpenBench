@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.so.*
+.Python
+.venv/
+env/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
+dist/
+*.log
+.npm
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local config
+config/local*.json
+*.local
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# FOB runtime data
+data/
+captures/
+logs/
+nohup.out
+frontend/nohup.out
+
+# Projects workspace — track structure but not large files
+Projects/*/captures/*.json
+Projects/*/captures/*.bin
+Projects/*/captures/*.hex
+Projects/*/firmware/*.bin
+Projects/*/firmware/*.hex
+Projects/*/waveforms/*.csv
+Projects/*/waveforms/*.sr

@@ -1,0 +1,18 @@
+{
+  "name": "Forge Open Bench",
+  "short_name": "FOB",
+  "description": "Local-first hardware IDE for electronics engineers.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1a1a1a",
+  "theme_color": "#FF9900",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

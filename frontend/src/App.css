@@ -1,0 +1,226 @@
+/* Bench Studio — LCARS-inspired shell styling */
+
+:root {
+  --bg: #0A0A0F;
+  --surface: #1A1A24;
+  --surface-hover: #252533;
+  --accent: #FF9900;
+  --accent-glow: rgba(255, 153, 0, 0.3);
+  --border: rgba(255, 153, 0, 0.25);
+  --text: #E8E8EC;
+  --text-dim: #888899;
+  --green: #33FF33;
+  --red: #FF3333;
+  --blue: #3399FF;
+  --purple: #9966FF;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  overflow: hidden;
+}
+
+.bench-studio {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+}
+
+/* ── Top Bar ── */
+.top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 40px;
+  padding: 0 16px;
+  background: var(--surface);
+  border-bottom: 2px solid var(--accent);
+  flex-shrink: 0;
+}
+
+.top-bar .brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.5px;
+  color: var(--accent);
+}
+
+.top-bar .brand .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.top-bar .transports {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 12px;
+}
+
+.transport-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 4px;
+}
+
+.transport-dot.on { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.transport-dot.off { background: var(--text-dim); }
+
+.top-bar .actions {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-icon {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.btn-icon:hover {
+  background: var(--surface-hover);
+  color: var(--accent);
+}
+
+/* ── Main Layout ── */
+.main-layout {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ── Sidebar ── */
+.sidebar {
+  width: 72px;
+  background: var(--surface);
+  border-right: 2px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 0;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.sidebar-pill {
+  width: 56px;
+  height: 56px;
+  border-radius: 12px;
+  border: 2px solid transparent;
+  background: var(--bg);
+  color: var(--text-dim);
+  font-size: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  position: relative;
+}
+
+.sidebar-pill:hover {
+  border-color: var(--border);
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.sidebar-pill.active {
+  border-left: 4px solid var(--accent);
+  border-color: var(--border);
+  color: var(--accent);
+  background: var(--surface-hover);
+  box-shadow: 0 0 12px var(--accent-glow);
+}
+
+/* ── Content Area ── */
+.content-area {
+  flex: 1;
+  padding: 16px;
+  overflow: auto;
+  background: var(--bg);
+}
+
+.telemetry-block {
+  background: var(--surface);
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.telemetry-block .block-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: rgba(255, 153, 0, 0.1);
+  border-bottom: 2px solid var(--border);
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--accent);
+}
+
+.telemetry-block .block-body {
+  padding: 16px;
+}
+
+/* ── Terminal Drawer ── */
+.terminal-drawer {
+  background: var(--surface);
+  border-top: 2px solid var(--accent);
+  flex-shrink: 0;
+  transition: height 0.3s ease;
+}
+
+.terminal-drawer.collapsed {
+  height: 32px;
+}
+
+.terminal-drawer.expanded {
+  height: 240px;
+}
+
+.terminal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  height: 32px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--accent);
+}
+
+.terminal-body {
+  height: calc(100% - 32px);
+  padding: 8px 12px;
+  overflow: auto;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}
