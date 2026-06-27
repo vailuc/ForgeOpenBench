@@ -110,6 +110,7 @@ export function TriggerPanel({ state, onChange, disabled, onSet50Percent }: Prop
           <option value="auto">Auto</option>
           <option value="normal">Normal</option>
           <option value="single">Single</option>
+          <option value="smart">Smart</option>
         </select>
       </div>
 

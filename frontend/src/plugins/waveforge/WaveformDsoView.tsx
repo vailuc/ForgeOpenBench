@@ -201,6 +201,10 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
   const singleArmedRef = useRef(false);
   const singleJustTriggeredRef = useRef(false);
   const triggerArmedRef = useRef(true); // for Normal mode: re-arm after signal leaves trigger zone
+  // Smart trigger state machine
+  const smartStateRef = useRef<"auto" | "normal">("auto");
+  const smartTimerRef = useRef(0); // time entered auto sub-state with trigger present
+  const smartLastRenderRef = useRef(0); // last render time in normal sub-state
   useEffect(() => {
     const mode = acquireModeRef.current;
     runningRef.current = mode !== "stopped" && mode !== "single-held";
@@ -886,6 +890,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       if (detectTrigger(sourceBuf)) {
         setAcquireMode("single-held");
         renderNow(ch1Buf.current, ch2Buf.current);
+        smartLastRenderRef.current = nowPerf;
         void stop(true);
       }
       return;
@@ -893,6 +898,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
 
     if (mode === "averaging") {
       if (detectTrigger(sourceBuf)) {
+        smartLastRenderRef.current = nowPerf;
         const n = ch1Buf.current.length;
         if (avgAccumCount.current === 0) {
           avgBuf1.current = new Array(n).fill(0);
@@ -947,6 +953,44 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
           if (slope === "fall" && last > level + margin) triggerArmedRef.current = true;
           if (slope === "both" && (last < level - margin || last > level + margin)) triggerArmedRef.current = true;
         }
+      } else if (tmode === "smart") {
+        const triggered = detectTrigger(sourceBuf);
+        if (smartStateRef.current === "auto") {
+          renderNow(ch1Buf.current, ch2Buf.current);
+          triggerArmedRef.current = true;
+          if (triggered) {
+            if (smartTimerRef.current === 0) smartTimerRef.current = nowPerf;
+            if (nowPerf - smartTimerRef.current > 600) {
+              smartStateRef.current = "normal";
+              smartLastRenderRef.current = nowPerf;
+            }
+          } else {
+            smartTimerRef.current = 0;
+          }
+        } else {
+          // Normal-like
+          if (triggered && triggerArmedRef.current) {
+            renderNow(ch1Buf.current, ch2Buf.current);
+            smartLastRenderRef.current = nowPerf;
+            triggerArmedRef.current = false;
+          }
+          // Re-arm when signal leaves trigger zone
+          if (!triggerArmedRef.current && sourceBuf.length > 0) {
+            const last = sourceBuf[sourceBuf.length - 1];
+            const level = triggerRef.current.level;
+            const slope = triggerRef.current.slope;
+            const margin = vpp * 0.05;
+            if (slope === "rise" && last < level - margin) triggerArmedRef.current = true;
+            if (slope === "fall" && last > level + margin) triggerArmedRef.current = true;
+            if (slope === "both" && (last < level - margin || last > level + margin)) triggerArmedRef.current = true;
+          }
+          // Revert to auto after 800ms without trigger
+          if (nowPerf - smartLastRenderRef.current > 800) {
+            smartStateRef.current = "auto";
+            smartTimerRef.current = 0;
+            triggerArmedRef.current = true;
+          }
+        }
       }
     }
   }, [vpp, windowMs]);
@@ -961,6 +1005,9 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
     filtRing2.current = [];
     plotThrottleRef.current = 0;
     triggerArmedRef.current = true;
+    smartStateRef.current = "auto";
+    smartTimerRef.current = 0;
+    smartLastRenderRef.current = 0;
     try {
       await transport.configure({
         mode: "dso",

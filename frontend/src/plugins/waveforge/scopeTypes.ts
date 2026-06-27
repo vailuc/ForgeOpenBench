@@ -35,7 +35,7 @@ export interface TriggerState {
   source: "ch1" | "ch2" | "ext" | "acline";
   level: number;       // volts
   slope: "rise" | "fall" | "both";
-  mode: "auto" | "normal" | "single";
+  mode: "auto" | "normal" | "single" | "smart";
   coupling: "dc" | "ac" | "hfrej" | "lfrej" | "noiserej";
   holdoff: number;     // seconds
 }
