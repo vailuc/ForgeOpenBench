@@ -470,7 +470,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
 
       // Overview plot
       if (overviewContainer) {
-        const oW = overviewContainer.offsetWidth || 600;
+        const oW = overviewContainer.offsetWidth || W;
         const oH = overviewContainer.offsetHeight || 80;
         const drawZoomBox = (u: uPlot) => {
           const main = plotRef.current;
@@ -1088,11 +1088,11 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       {/* Main Area: Canvas + Right Panel */}
       <div className="flex flex-1 gap-1 overflow-hidden min-h-0">
         {/* Canvas */}
-        <div className="flex flex-col flex-1 min-h-0 gap-1">
+        <div className="flex flex-col flex-1 min-h-0 min-w-0 gap-1">
           {viewMode === "time" && (
-            <div ref={overviewDivRef} className="h-20 rounded border border-fob-border overflow-hidden bg-fob-surface shrink-0" />
+            <div ref={overviewDivRef} className="h-20 rounded border border-fob-border overflow-hidden bg-fob-surface shrink-0 min-w-0" />
           )}
-          <div ref={plotDivRef} className="flex-1 rounded border border-fob-border overflow-hidden bg-fob-surface min-h-0" />
+          <div ref={plotDivRef} className="flex-1 rounded border border-fob-border overflow-hidden bg-fob-surface min-h-0 min-w-0" />
         </div>
 
         {/* Right Control Panel */}
