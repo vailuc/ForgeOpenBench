@@ -830,10 +830,14 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       div.style.cursor = "";
     };
 
+    let lastWheelTime = 0;
     const onWheel = (e: WheelEvent) => {
       const amode = acquireModeRef.current;
       if (amode === "running" || amode === "rolling" || amode === "single-armed" || amode === "averaging") return;
       e.preventDefault();
+      const now = performance.now();
+      if (now - lastWheelTime < 50) return; // throttle to 50ms (~20 fps max)
+      lastWheelTime = now;
       const plot = plotRef.current;
       if (!plot) return;
       const factor = e.deltaY < 0 ? 0.85 : 1.15;
@@ -841,9 +845,12 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       const xMax = plot.scales.x.max ?? 0;
       const yMin = plot.scales.y.min ?? 0;
       const yMax = plot.scales.y.max ?? 0;
-      const rect = div.getBoundingClientRect();
-      const mx = e.clientX - rect.left;
-      const my = e.clientY - rect.top;
+      // Use canvas-relative coords (same system as plot.bbox)
+      const canvas = plot.root.querySelector('canvas') as HTMLCanvasElement | null;
+      if (!canvas) return;
+      const cRect = canvas.getBoundingClientRect();
+      const mx = e.clientX - cRect.left;
+      const my = e.clientY - cRect.top;
       const pl = plot.bbox.left;
       const pt = plot.bbox.top;
       const pw = plot.bbox.width;
@@ -851,8 +858,11 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       if (mx < pl || mx > pl + pw || my < pt || my > pt + ph) return;
       const fx = (mx - pl) / pw;
       const fy = (my - pt) / ph;
-      const xRange = (xMax - xMin) * factor;
-      const yRange = (yMax - yMin) * factor;
+      let xRange = (xMax - xMin) * factor;
+      let yRange = (yMax - yMin) * factor;
+      // Guard against zooming in too far (min 10 µs x, min 1 mV y)
+      if (xRange < 1e-5) xRange = 1e-5;
+      if (yRange < 0.001) yRange = 0.001;
       const nxMin = xMin + (xMax - xMin) * fx - xRange * fx;
       const nxMax = nxMin + xRange;
       const nyMin = yMin + (yMax - yMin) * (1 - fy) - yRange * (1 - fy);
