@@ -414,7 +414,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
           { stroke: "#60A5FA", width: 1.5, label: "CH2", show: false },
           { stroke: "#4ADE80", width: 1.5, label: "MATH", show: false },
         ],
-        cursor: { show: true, drag: { x: true, y: true } },
+        cursor: { show: true, drag: { x: false, y: false } },
         hooks: { drawClear: [drawPhosphor] },
       };
     } else if (mode === "xy") {
@@ -432,7 +432,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
           { stroke: "#60A5FA", width: 1.5, label: "CH2", show: false },
           { stroke: "#4ADE80", width: 1.5, label: "MATH", show: false },
         ],
-        cursor: { show: true, drag: { x: true, y: true } },
+        cursor: { show: true, drag: { x: false, y: false } },
         hooks: { drawClear: [drawPhosphor] },
       };
     } else {
@@ -450,7 +450,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
           { stroke: "#60A5FA", width: 1.5, label: "CH2", show: ch2Vertical.enabled },
           { stroke: "#4ADE80", width: 1.5, label: "MATH", show: math.enabled },
         ],
-        cursor: { show: true, drag: { x: true, y: true } },
+        cursor: { show: true, drag: { x: false, y: false } },
         hooks: { drawClear: [drawTriggerLine, drawPhosphor] },
       };
     }
@@ -471,11 +471,85 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
     const div = plotDivRef.current;
     if (!div) return;
     buildPlot(div);
+
+    // Custom panning (click-drag) and wheel zoom
+    let isPanning = false;
+    let panStartX = 0, panStartY = 0;
+    let panStartXMin = 0, panStartXMax = 0, panStartYMin = 0, panStartYMax = 0;
+
+    const onMouseDown = (e: MouseEvent) => {
+      if (e.button !== 0) return;
+      const plot = plotRef.current;
+      if (!plot) return;
+      isPanning = true;
+      panStartX = e.clientX;
+      panStartY = e.clientY;
+      panStartXMin = plot.scales.x.min ?? 0;
+      panStartXMax = plot.scales.x.max ?? 0;
+      panStartYMin = plot.scales.y.min ?? 0;
+      panStartYMax = plot.scales.y.max ?? 0;
+    };
+    const onMouseMove = (e: MouseEvent) => {
+      if (!isPanning) return;
+      const plot = plotRef.current;
+      if (!plot) return;
+      const dx = e.clientX - panStartX;
+      const dy = e.clientY - panStartY;
+      const pw = plot.bbox.width;
+      const ph = plot.bbox.height;
+      if (!pw || !ph) return;
+      const xShift = (dx / pw) * (panStartXMax - panStartXMin);
+      const yShift = (dy / ph) * (panStartYMax - panStartYMin);
+      plot.setScale('x', { min: panStartXMin - xShift, max: panStartXMax - xShift });
+      plot.setScale('y', { min: panStartYMin + yShift, max: panStartYMax + yShift });
+    };
+    const onMouseUp = () => { isPanning = false; };
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const plot = plotRef.current;
+      if (!plot) return;
+      const factor = e.deltaY < 0 ? 0.85 : 1.15;
+      const xMin = plot.scales.x.min ?? 0;
+      const xMax = plot.scales.x.max ?? 0;
+      const yMin = plot.scales.y.min ?? 0;
+      const yMax = plot.scales.y.max ?? 0;
+      const rect = div.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      const pl = plot.bbox.left;
+      const pt = plot.bbox.top;
+      const pw = plot.bbox.width;
+      const ph = plot.bbox.height;
+      if (mx < pl || mx > pl + pw || my < pt || my > pt + ph) return;
+      const fx = (mx - pl) / pw;
+      const fy = (my - pt) / ph;
+      const xRange = (xMax - xMin) * factor;
+      const yRange = (yMax - yMin) * factor;
+      const nxMin = xMin + (xMax - xMin) * fx - xRange * fx;
+      const nxMax = nxMin + xRange;
+      const nyMin = yMin + (yMax - yMin) * (1 - fy) - yRange * (1 - fy);
+      const nyMax = nyMin + yRange;
+      plot.setScale('x', { min: nxMin, max: nxMax });
+      plot.setScale('y', { min: nyMin, max: nyMax });
+    };
+
+    div.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    div.addEventListener('wheel', onWheel, { passive: false });
+
     const ro = new ResizeObserver(() => {
       plotRef.current?.setSize({ width: div.offsetWidth, height: div.offsetHeight });
     });
     ro.observe(div);
-    return () => { ro.disconnect(); plotRef.current?.destroy(); plotRef.current = null; };
+    return () => {
+      div.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      div.removeEventListener('wheel', onWheel);
+      ro.disconnect(); plotRef.current?.destroy(); plotRef.current = null;
+    };
   }, [buildPlot]);
 
   // Data push handler
