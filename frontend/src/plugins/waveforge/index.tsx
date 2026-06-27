@@ -123,10 +123,22 @@ function WaveForgeApp({ bus: _bus }: { bus: PluginBus }) {
 
   // Force disconnect on first scope visit after a refresh if still connected.
   // The USB stream state from before the refresh is stale; a reconnect gives a clean start.
+  const resettingRef = useRef(false);
   useEffect(() => {
-    if (activeTab === "dso" && connected && scopeNeedsResetRef.current) {
+    if (activeTab === "dso" && connected && scopeNeedsResetRef.current && !resettingRef.current) {
+      resettingRef.current = true;
       scopeNeedsResetRef.current = false;
-      void disconnect();
+      (async () => {
+        try {
+          await disconnect();
+          if (selectedDeviceRef.current) {
+            await new Promise(r => setTimeout(r, 150));
+            await connectRef.current();
+          }
+        } finally {
+          resettingRef.current = false;
+        }
+      })();
     }
   }, [activeTab, connected, disconnect]);
 
