@@ -874,12 +874,15 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
 
       // Phosphor: capture aligned trace snapshot (trigger-aligned)
       if (phosphorEnabledRef.current && sn > 0) {
-        const tIdx = findTriggerIndex(s1); // re-detect trigger within the aligned slice
+        // Use the trigger that was already found for alignment (tIdx in full buffer).
+        // In the sliced array s1, the trigger offset is tIdx - startIdx.
+        // Do NOT re-detect — findTriggerIndex(s1) may find an earlier crossing
+        // in the pre-trigger region, causing misaligned ghosts.
         const snap: TraceSnapshot = {
           mode: "time",
           ys1: new Float64Array(s1),
           ys2: new Float64Array(s2),
-          triggerOffset: tIdx >= 0 ? tIdx : Math.floor(sn * 0.25),
+          triggerOffset: alignTrigger ? Math.max(0, tIdx - startIdx) : Math.floor(sn * 0.25),
           dt,
         };
         phosphorTraces.current.push(snap);
@@ -1136,6 +1139,12 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       setCh2Vertical(prev => ({ ...prev, vDiv: result.vDiv }));
       setHorizontal(prev => ({ ...prev, sDiv: result.sDiv }));
       setTrigger(prev => ({ ...prev, level: result.triggerLevel, source: result.source }));
+      // Clear phosphor ghosts so they don't mismatch the new timebase
+      phosphorTraces.current = [];
+      // Force a fresh render with current buffers at new settings
+      if (ch1Buf.current.length > 0) {
+        forceTriggerRef.current?.();
+      }
     }
   };
   const handleForceTrigger = () => {
