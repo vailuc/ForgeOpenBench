@@ -344,9 +344,8 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
   const measThrottleRef = useRef(0);
   const plotThrottleRef = useRef(0);
 
-  // Trigger line drag state (refs survive across handler re-attachments)
+  // Trigger line drag state (ref survives across handler re-attachments)
   const isDraggingTriggerRef = useRef(false);
-  const triggerDragPrevYRef = useRef(0);
 
   // Derived values for backend
   const vpp = vDivToVpp(ch1Vertical.vDiv);
@@ -751,7 +750,6 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       // Check if clicking near trigger line (works even during acquisition)
       if (triggerY !== null && Math.abs(my - triggerY) <= 20) {
         isDraggingTriggerRef.current = true;
-        triggerDragPrevYRef.current = e.clientY;
         div.style.cursor = "ns-resize";
         e.preventDefault();
         return;
@@ -772,18 +770,17 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       if (isDraggingTriggerRef.current) {
         const plot = plotRef.current;
         if (!plot) return;
-        const dy = e.clientY - triggerDragPrevYRef.current;
-        triggerDragPrevYRef.current = e.clientY;
-        const plotH = plot.bbox.height;
+        const canvas = plot.root.querySelector('canvas') as HTMLCanvasElement | null;
+        if (!canvas) return;
+        const canvasRect = canvas.getBoundingClientRect();
+        const mouseY = e.clientY - canvasRect.top;
+        const newLevel = plot.posToVal(mouseY, "y");
         const posOff = (triggerRef.current.source === "ch2"
           ? ch2VerticalRef.current.position * ch2VerticalRef.current.vDiv
           : ch1VerticalRef.current.position * ch1VerticalRef.current.vDiv);
         const yRange = ch1VerticalRef.current.vDiv * 10;
         const vmin = -yRange / 2 + posOff;
         const vmax = yRange / 2 + posOff;
-        const yScale = plotH / (vmax - vmin);
-        const dV = -dy / yScale; // Y increases downward
-        const newLevel = triggerRef.current.level + dV;
         const clamped = Math.max(vmin, Math.min(vmax, newLevel));
         setTrigger(prev => ({ ...prev, level: clamped }));
         return;
