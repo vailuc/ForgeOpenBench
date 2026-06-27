@@ -329,10 +329,27 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
   useEffect(() => { triggerRef.current = trigger; }, [trigger]);
   useEffect(() => {
     sampleRateRef.current = sampleRate;
-    // If actively streaming, just reconfigure the backend with the new sample rate.
-    // Skip stop/start — those RPCs can timeout while the backend is busy streaming.
+    // If actively streaming, do a full stop/configure/start cycle so the backend
+    // actually applies the new sample rate to the hardware. We must unregister
+    // the data handler and set intentionalStopRef before calling transport.stop()
+    // to avoid RPC timeouts and auto-restart races.
     if (dataOffRef.current) {
       (async () => {
+        // --- soft stop (same pattern as handleStop) ---
+        intentionalStopRef.current = true;
+        runningRef.current = false;
+        dataOffRef.current?.();
+        dataOffRef.current = null;
+        ch1Buf.current = [];
+        ch2Buf.current = [];
+        mathBuf.current = [];
+        phosphorTraces.current = [];
+        filtRing1.current = [];
+        filtRing2.current = [];
+        plotThrottleRef.current = 0;
+        try { await transport.stop(); } catch { }
+
+        // --- restart with new rate (same pattern as handleRun start) ---
         try {
           await transport.configure({
             mode: "dso",
@@ -340,18 +357,18 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
             sample_width: 8,
             voltage_range: vpp,
           });
+          dataOffRef.current = transport.onData(pushData);
+          await transport.start();
+          runningRef.current = true;
+          intentionalStopRef.current = false;
         } catch (e) {
-          console.warn("[DSO] sample-rate reconfigure failed", e);
+          runningRef.current = false;
+          if (e instanceof Error && e.message.includes("Not connected")) {
+            intentionalStopRef.current = true;
+          }
+          console.warn("[DSO] sample-rate restart failed", e);
         }
       })();
-      // Clear buffers so old-rate data doesn't mix with new-rate data
-      ch1Buf.current = [];
-      ch2Buf.current = [];
-      mathBuf.current = [];
-      phosphorTraces.current = [];
-      filtRing1.current = [];
-      filtRing2.current = [];
-      plotThrottleRef.current = 0;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sampleRate]);
