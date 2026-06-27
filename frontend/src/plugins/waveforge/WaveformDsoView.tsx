@@ -115,9 +115,13 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
   const plotDivRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
 
-  // Data refs (same as legacy)
-  const runningRef = useRef(false);
-  const pausedRef = useRef(false);
+  // Acquire state machine lite
+  type AcquireMode = "stopped" | "running" | "single-armed" | "single-held" | "rolling" | "averaging";
+  const [acquireMode, setAcquireMode] = useState<AcquireMode>("stopped");
+  const acquireModeRef = useRef<AcquireMode>("stopped");
+  useEffect(() => { acquireModeRef.current = acquireMode; }, [acquireMode]);
+
+  // Data refs
   const dataOffRef = useRef<(() => void) | null>(null);
   const ch1Buf = useRef<number[]>([]);
   const ch2Buf = useRef<number[]>([]);
@@ -125,15 +129,28 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
   const filtRing1 = useRef<number[]>([]);
   const filtRing2 = useRef<number[]>([]);
   const intentionalStopRef = useRef(false);
-  const singleArmedRef = useRef(false);
-  const singleJustTriggeredRef = useRef(false);
   const startRef = useRef<() => Promise<void>>(async () => {});
   const connectedRef = useRef(connected);
   useEffect(() => { connectedRef.current = connected; }, [connected]);
 
-  // Display state
-  const [running, setRunning] = useState(false);
-  const [paused, setPaused] = useState(false);
+  // Average mode accumulation
+  const avgAccumCount = useRef(0);
+  const avgBuf1 = useRef<number[]>([]);
+  const avgBuf2 = useRef<number[]>([]);
+
+  // Compatibility shims — old boolean refs mapped to new acquireMode
+  // TODO: migrate all references to acquireModeRef directly
+  const runningRef = useRef(false);
+  const pausedRef = useRef(false);
+  const singleArmedRef = useRef(false);
+  const singleJustTriggeredRef = useRef(false);
+  useEffect(() => {
+    const mode = acquireModeRef.current;
+    runningRef.current = mode !== "stopped" && mode !== "single-held";
+    pausedRef.current = false;
+    singleArmedRef.current = mode === "single-armed";
+    singleJustTriggeredRef.current = false;
+  });
 
   // Vertical state (new hardware layout)
   const [ch1Vertical, setCh1Vertical] = useState<VerticalState>({
@@ -432,10 +449,10 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       dataOffRef.current = transport.onData(pushData);
       await transport.start();
       runningRef.current = true;
-      setRunning(true);
+      setAcquireMode("running");
     } catch (e) {
       runningRef.current = false;
-      setRunning(false);
+      setAcquireMode("stopped");
       console.warn("[DSO] start error", e);
     }
   }, [connected, transport, pushData, vpp]);
@@ -443,7 +460,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
   const stop = useCallback(async (intentional = false) => {
     intentionalStopRef.current = intentional;
     runningRef.current = false;
-    setRunning(false);
+    setAcquireMode("stopped");
     dataOffRef.current?.();
     dataOffRef.current = null;
     ch1Buf.current = [];
@@ -462,7 +479,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
     const unsubscribe = transport.onStopped(() => {
       if (!runningRef.current) return;
       runningRef.current = false;
-      setRunning(false);
+      setAcquireMode("stopped");
       ch1Buf.current = []; ch2Buf.current = []; mathBuf.current = [];
       filtRing1.current = []; filtRing2.current = [];
       if (intentionalStopRef.current) {
@@ -494,11 +511,10 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
   }, [isActive, connected, stop]);
 
   // Toolbar handlers
-  const handleRun = () => { pausedRef.current = false; setPaused(false); void start(); };
+  const handleRun = () => { void start(); };
   const handleStop = () => void stop(true);
   const handleSingle = () => {
-    singleArmedRef.current = true;
-    singleJustTriggeredRef.current = false;
+    setAcquireMode("single-armed");
     void start();
   };
   const handleAutoSet = () => {
@@ -537,8 +553,8 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
     <div className="flex flex-col h-full bg-fob-surface text-fob-text font-mono text-xs select-none">
       {/* Acquire Toolbar */}
       <AcquireToolbar
-        running={running}
-        paused={paused}
+        running={acquireMode === "running" || acquireMode === "single-armed"}
+        paused={acquireMode === "single-held"}
         onRun={handleRun}
         onStop={handleStop}
         onSingle={handleSingle}
