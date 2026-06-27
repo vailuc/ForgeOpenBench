@@ -344,6 +344,10 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
   const measThrottleRef = useRef(0);
   const plotThrottleRef = useRef(0);
 
+  // Trigger line drag state (refs survive across handler re-attachments)
+  const isDraggingTriggerRef = useRef(false);
+  const triggerDragPrevYRef = useRef(0);
+
   // Derived values for backend
   const vpp = vDivToVpp(ch1Vertical.vDiv);
   const windowMs = sDivToWindowMs(horizontal.sDiv);
@@ -719,17 +723,47 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
     if (!div) return;
     buildPlot(div, odiv ?? undefined);
 
-    // Custom panning (click-drag) and wheel zoom
+    // Trigger line Y in screen coords (relative to viewport)
+    const getTriggerLineY = (): number | null => {
+      const plot = plotRef.current;
+      if (!plot || viewMode !== "time") return null;
+      const level = triggerRef.current.level;
+      const posOff = (triggerRef.current.source === "ch2"
+        ? ch2VerticalRef.current.position * ch2VerticalRef.current.vDiv
+        : ch1VerticalRef.current.position * ch1VerticalRef.current.vDiv);
+      const yRange = ch1VerticalRef.current.vDiv * 10;
+      const vmin = -yRange / 2 + posOff;
+      const vmax = yRange / 2 + posOff;
+      const plotTop = plot.bbox.top;
+      const plotH = plot.bbox.height;
+      const yScale = plotH / (vmax - vmin);
+      const yOfs = plotTop + plotH;
+      return yOfs - (level - vmin) * yScale;
+    };
+
+    // Custom panning (click-drag), trigger drag, and wheel zoom
     let isPanning = false;
     let panStartX = 0, panStartY = 0;
     let panStartXMin = 0, panStartXMax = 0, panStartYMin = 0, panStartYMax = 0;
 
     const onMouseDown = (e: MouseEvent) => {
-      const amode = acquireModeRef.current;
-      if (amode === "running" || amode === "rolling" || amode === "single-armed" || amode === "averaging") return;
       if (e.button !== 0) return;
       const plot = plotRef.current;
       if (!plot) return;
+      const rect = div.getBoundingClientRect();
+      const my = e.clientY - rect.top;
+      const triggerY = getTriggerLineY();
+      // Check if clicking near trigger line (works even during acquisition)
+      if (triggerY !== null && Math.abs(my - triggerY) <= 10) {
+        isDraggingTriggerRef.current = true;
+        triggerDragPrevYRef.current = e.clientY;
+        div.style.cursor = "ns-resize";
+        e.preventDefault();
+        return;
+      }
+      // Otherwise, normal pan (only when not acquiring)
+      const amode = acquireModeRef.current;
+      if (amode === "running" || amode === "rolling" || amode === "single-armed" || amode === "averaging") return;
       isPanning = true;
       panStartX = e.clientX;
       panStartY = e.clientY;
@@ -739,7 +773,38 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       panStartYMax = plot.scales.y.max ?? 0;
     };
     const onMouseMove = (e: MouseEvent) => {
-      if (!isPanning) return;
+      // Trigger drag (works during acquisition too)
+      if (isDraggingTriggerRef.current) {
+        const plot = plotRef.current;
+        if (!plot) return;
+        const dy = e.clientY - triggerDragPrevYRef.current;
+        triggerDragPrevYRef.current = e.clientY;
+        const plotH = plot.bbox.height;
+        const posOff = (triggerRef.current.source === "ch2"
+          ? ch2VerticalRef.current.position * ch2VerticalRef.current.vDiv
+          : ch1VerticalRef.current.position * ch1VerticalRef.current.vDiv);
+        const yRange = ch1VerticalRef.current.vDiv * 10;
+        const vmin = -yRange / 2 + posOff;
+        const vmax = yRange / 2 + posOff;
+        const yScale = plotH / (vmax - vmin);
+        const dV = -dy / yScale; // Y increases downward
+        const newLevel = triggerRef.current.level + dV;
+        const clamped = Math.max(vmin, Math.min(vmax, newLevel));
+        setTrigger(prev => ({ ...prev, level: clamped }));
+        return;
+      }
+      if (!isPanning) {
+        // Hover: change cursor when near trigger line
+        const triggerY = getTriggerLineY();
+        const rect = div.getBoundingClientRect();
+        const my = e.clientY - rect.top;
+        if (triggerY !== null && Math.abs(my - triggerY) <= 10) {
+          div.style.cursor = "ns-resize";
+        } else {
+          div.style.cursor = "";
+        }
+        return;
+      }
       const plot = plotRef.current;
       if (!plot) return;
       const dx = e.clientX - panStartX;
@@ -752,7 +817,11 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       plot.setScale('x', { min: panStartXMin - xShift, max: panStartXMax - xShift });
       plot.setScale('y', { min: panStartYMin + yShift, max: panStartYMax + yShift });
     };
-    const onMouseUp = () => { isPanning = false; };
+    const onMouseUp = () => {
+      isDraggingTriggerRef.current = false;
+      isPanning = false;
+      div.style.cursor = "";
+    };
 
     const onWheel = (e: WheelEvent) => {
       const amode = acquireModeRef.current;
