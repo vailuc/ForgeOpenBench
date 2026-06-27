@@ -17,6 +17,7 @@ interface Props {
   transport: UsbTransport;
   isActive: boolean;
   connected: boolean;
+  resetting?: boolean;
 }
 
 /* ── Enhanced measurement helpers ──────────────────────────────────── */
@@ -179,7 +180,7 @@ function saveScopeState(state: Record<string, unknown>) {
 }
 
 /* ── Main Component ────────────────────────────────────────────────── */
-export function WaveformDsoView({ transport, isActive, connected }: Props) {
+export function WaveformDsoView({ transport, isActive, connected, resetting }: Props) {
   const plotDivRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
   const overviewDivRef = useRef<HTMLDivElement>(null);
@@ -339,13 +340,14 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
     });
   }, [ch1Vertical, ch2Vertical, horizontal, trigger, math, phosphorEnabled, sampleRate]);
 
-  // Auto-start when connected and active
+  // Auto-start when connected and active (skip during parent-initiated reset)
   useEffect(() => {
+    if (resetting) return;
     if (connected && isActive && !runningRef.current && !pausedRef.current) {
       void start();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connected, isActive]);
+  }, [connected, isActive, resetting]);
 
   // Build / rebuild uPlot
   const buildPlot = useCallback((container: HTMLDivElement, overviewContainer?: HTMLDivElement) => {
@@ -1053,6 +1055,13 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
   // Start / stop
   const start = useCallback(async () => {
     if (!connected || runningRef.current) return;
+    // If we already have an active data handler, the backend is streaming.
+    // Just resume state without re-configuring (avoids disruption on spurious usb_stopped).
+    if (dataOffRef.current) {
+      runningRef.current = true;
+      setAcquireMode("running");
+      return;
+    }
     ch1Buf.current = [];
     ch2Buf.current = [];
     mathBuf.current = [];
@@ -1079,6 +1088,10 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
     } catch (e) {
       runningRef.current = false;
       setAcquireMode("stopped");
+      // If the device isn't connected, suppress auto-restart so we don't hammer the backend.
+      if (e instanceof Error && e.message.includes("Not connected")) {
+        intentionalStopRef.current = true;
+      }
       console.warn("[DSO] start error", e);
     }
   }, [connected, transport, pushData, vpp]);

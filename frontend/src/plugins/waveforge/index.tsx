@@ -27,6 +27,7 @@ function WaveForgeApp({ bus: _bus }: { bus: PluginBus }) {
   const [devices, setDevices] = useState<UsbDeviceInfo[]>([]);
   const [selectedDevice, setSelectedDevice] = useState<UsbDeviceInfo | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
   const cfg = useSettingsStore((s) => (s.config?.waveforge as Record<string, unknown> | undefined) ?? EMPTY_CFG);
   const defaultDevicePattern = (cfg.defaultDevice as string | undefined) ?? "";
   const transportRef = useRef(getSharedUsbTransport());
@@ -127,6 +128,7 @@ function WaveForgeApp({ bus: _bus }: { bus: PluginBus }) {
   useEffect(() => {
     if (activeTab === "dso" && connected && scopeNeedsResetRef.current && !resettingRef.current) {
       resettingRef.current = true;
+      setIsResetting(true);
       scopeNeedsResetRef.current = false;
       (async () => {
         try {
@@ -137,6 +139,7 @@ function WaveForgeApp({ bus: _bus }: { bus: PluginBus }) {
           }
         } finally {
           resettingRef.current = false;
+          setIsResetting(false);
         }
       })();
     }
@@ -248,7 +251,7 @@ function WaveForgeApp({ bus: _bus }: { bus: PluginBus }) {
           <WaveformLaView transport={transportRef.current} isActive={activeTab === "la"} connected={connected} />
         </div>
         <div className={`absolute inset-0 ${activeTab === "dso" ? "z-10" : "z-0 hidden"}`}>
-          <WaveformDsoView transport={transportRef.current} isActive={activeTab === "dso"} connected={connected} />
+          <WaveformDsoView transport={transportRef.current} isActive={activeTab === "dso"} connected={connected} resetting={isResetting} />
         </div>
       </div>
     </div>
