@@ -284,6 +284,9 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
   const phosphorTraces = useRef<TraceSnapshot[]>([]);
   const MAX_PHOSPHOR_TRACES = 8; // ~0.4s at 50ms throttle
   const forceTriggerRef = useRef<(() => void) | null>(null);
+  // Rolling-mode smart lock: auto-capture stable triggered frame
+  const rollingTriggerTimes = useRef<number[]>([]);
+  const rollingLockedSnap = useRef<TraceSnapshot | null>(null);
 
   // Derived view mode
   const viewMode = math.enabled && math.op === "fft" ? "fft" : math.enabled && math.op === "xy" ? "xy" : "time";
@@ -420,13 +423,14 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
 
     // Digital phosphor draw hook — trace echo: draw fading copies of past traces
     const drawPhosphor = (u: uPlot) => {
-      if (!phosphorEnabledRef.current || phosphorTraces.current.length === 0) return;
       const t0 = performance.now();
       const ctx = u.ctx;
       const traces = phosphorTraces.current;
-      const n = traces.length;
-      // Skip the newest trace — uPlot already drew it at full opacity.
-      for (let t = 0; t < n - 1; t++) {
+      // Phosphor traces
+      if (phosphorEnabledRef.current && traces.length > 0) {
+        const n = traces.length;
+        // Skip the newest trace — uPlot already drew it at full opacity.
+        for (let t = 0; t < n - 1; t++) {
         const snap = traces[t];
         const age = n - 1 - t; // 1 = oldest in buffer
         const opacity = Math.max(0, 1 - age / MAX_PHOSPHOR_TRACES) * 0.35;
@@ -475,6 +479,42 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
           else { ctx.lineTo(x, y); }
         }
         ctx.stroke();
+        }
+      }
+      // Rolling-mode smart lock: draw captured stable trace as bright overlay
+      const lockSnap = rollingLockedSnap.current;
+      if (lockSnap && lockSnap.mode === "time" && lockSnap.xs) {
+        const lastTrigger = rollingTriggerTimes.current[rollingTriggerTimes.current.length - 1];
+        const age = performance.now() - (lastTrigger ?? 0);
+        if (age < 3000) {
+          const xForLock = (i: number) => u.valToPos(lockSnap.xs![i], "x", true);
+          // CH1 locked trace — bright amber
+          ctx.beginPath();
+          ctx.strokeStyle = "rgba(245, 158, 11, 0.85)";
+          ctx.lineWidth = 1.5;
+          let first = true;
+          for (let i = 0; i < lockSnap.ys1.length; i++) {
+            const x = xForLock(i);
+            const y = u.valToPos(lockSnap.ys1[i], "y", true);
+            if (x == null || y == null) continue;
+            if (first) { ctx.moveTo(x, y); first = false; }
+            else { ctx.lineTo(x, y); }
+          }
+          ctx.stroke();
+          // CH2 locked trace — bright blue
+          ctx.beginPath();
+          ctx.strokeStyle = "rgba(96, 165, 250, 0.85)";
+          ctx.lineWidth = 1.5;
+          first = true;
+          for (let i = 0; i < lockSnap.ys2.length; i++) {
+            const x = xForLock(i);
+            const y = u.valToPos(lockSnap.ys2[i], "y", true);
+            if (x == null || y == null) continue;
+            if (first) { ctx.moveTo(x, y); first = false; }
+            else { ctx.lineTo(x, y); }
+          }
+          ctx.stroke();
+        }
       }
       const elapsed = performance.now() - t0;
       if (elapsed > 50) {
@@ -1033,6 +1073,51 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
     }
 
     if (mode === "rolling") {
+      // ── Smart rolling lock: detect stable triggers and freeze a trace ──
+      const tIdx = findTriggerIndex(sourceBuf);
+      if (tIdx >= 0) {
+        rollingTriggerTimes.current.push(performance.now());
+        if (rollingTriggerTimes.current.length > 10) rollingTriggerTimes.current.shift();
+        // Check stability: ≥3 triggers with consistent intervals (variance < 30%)
+        const times = rollingTriggerTimes.current;
+        if (times.length >= 3) {
+          const intervals: number[] = [];
+          for (let i = 1; i < times.length; i++) intervals.push(times[i] - times[i - 1]);
+          const mean = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+          const max = Math.max(...intervals);
+          const min = Math.min(...intervals);
+          if (mean > 0 && (max - min) / mean < 0.30) {
+            // Stable signal — capture trigger-aligned window from current buffers
+            const sr = sampleRateRef.current || 4_000_000;
+            const dt = 1 / sr;
+            const windowSamples = Math.max(100, Math.ceil(windowMs / 1000 * sr));
+            const preTrigger = Math.floor(windowSamples * 0.25);
+            const postTrigger = windowSamples - preTrigger;
+            const sIdx = Math.max(0, tIdx - preTrigger);
+            const eIdx = Math.min(ch1Buf.current.length, tIdx + postTrigger);
+            const s1 = ch1Buf.current.slice(sIdx, eIdx);
+            const s2 = ch2Buf.current.slice(sIdx, eIdx);
+            const xs = new Float64Array(s1.length);
+            for (let i = 0; i < s1.length; i++) xs[i] = (sIdx + i) * dt;
+            rollingLockedSnap.current = {
+              mode: "time",
+              xs,
+              ys1: new Float64Array(s1),
+              ys2: new Float64Array(s2),
+              triggerOffset: Math.max(0, tIdx - sIdx),
+              dt,
+            };
+          }
+        }
+      }
+      // Clear stale lock if no recent triggers
+      if (rollingTriggerTimes.current.length > 0) {
+        const lastTrigger = rollingTriggerTimes.current[rollingTriggerTimes.current.length - 1];
+        if (performance.now() - lastTrigger > 2000) {
+          rollingTriggerTimes.current = [];
+          rollingLockedSnap.current = null;
+        }
+      }
       // Bypass trigger, render latest window continuously
       if (nowPerf - plotThrottleRef.current > 50) {
         renderNow(ch1Buf.current, ch2Buf.current);
