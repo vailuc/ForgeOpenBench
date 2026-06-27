@@ -414,7 +414,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
           { stroke: "#60A5FA", width: 1.5, label: "CH2", show: false },
           { stroke: "#4ADE80", width: 1.5, label: "MATH", show: false },
         ],
-        cursor: { show: true },
+        cursor: { show: true, drag: { x: true, y: true } },
         hooks: { drawClear: [drawPhosphor] },
       };
     } else if (mode === "xy") {
@@ -432,26 +432,14 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
           { stroke: "#60A5FA", width: 1.5, label: "CH2", show: false },
           { stroke: "#4ADE80", width: 1.5, label: "MATH", show: false },
         ],
-        cursor: { show: true },
+        cursor: { show: true, drag: { x: true, y: true } },
         hooks: { drawClear: [drawPhosphor] },
       };
     } else {
-      // Position offsets: use trigger source channel position for grid center
-      const posOffset = (triggerRef.current.source === "ch2" ? ch2Vertical.position : ch1Vertical.position) / 1000;
-      // y-axis range is based on V/div setting, not hardware vpp bucket
-      const yRange = ch1Vertical.vDiv * 10; // 10 divisions total
-      const yMin = -yRange / 2 + posOffset;
-      const yMax = yRange / 2 + posOffset;
       opts = {
         width: W, height: H,
         padding: [0, 0, 0, 0],
-        scales: {
-          x: { time: false, range: (_u: uPlot, _dmin: number, dmax: number) => {
-            const delay = horizontal.position / 100 * dmax;
-            return [delay, dmax + delay];
-          }},
-          y: { range: [yMin, yMax] }
-        },
+        scales: { x: { time: false } },
         axes: [
           { stroke: "#666688", grid: { stroke: "#1A1A2E" }, values: timeAxisValues },
           { stroke: "#666688", grid: { stroke: "#1A1A2E" }, label: useMV ? "mV" : "V", values: voltAxisValues },
@@ -462,11 +450,21 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
           { stroke: "#60A5FA", width: 1.5, label: "CH2", show: ch2Vertical.enabled },
           { stroke: "#4ADE80", width: 1.5, label: "MATH", show: math.enabled },
         ],
-        cursor: { show: true },
+        cursor: { show: true, drag: { x: true, y: true } },
         hooks: { drawClear: [drawTriggerLine, drawPhosphor] },
       };
     }
     plotRef.current = new uPlot(opts, [[], [], [], []], container);
+    if (mode === "time") {
+      const posOffset = (triggerRef.current.source === "ch2" ? ch2Vertical.position : ch1Vertical.position) / 1000;
+      const yRange = ch1Vertical.vDiv * 10;
+      const yMin = -yRange / 2 + posOffset;
+      const yMax = yRange / 2 + posOffset;
+      const initXMax = windowMs / 1000;
+      const initDelay = (horizontal.position / 100) * initXMax;
+      plotRef.current.setScale('x', { min: initDelay, max: initXMax + initDelay });
+      plotRef.current.setScale('y', { min: yMin, max: yMax });
+    }
   }, [vpp, ch1Vertical.vDiv, ch2Vertical.vDiv, ch2Vertical.enabled, math.enabled, ch1Vertical.position, ch2Vertical.position, trigger.level, horizontal.position, viewMode, phosphorEnabled]);
 
   useEffect(() => {
@@ -701,17 +699,31 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       }
 
       // Render aligned or full
-      if (sn <= target || isPeak) {
+      const doDecimate = sn > target && !isPeak;
+      const step = doDecimate ? Math.floor(sn / target) : 1;
+      const m = doDecimate ? Math.ceil(sn / step) : sn;
+      if (!doDecimate) {
         const xs = Float64Array.from({ length: sn }, (_, i) => (startIdx + i) * dt);
         plot.setData([xs, new Float64Array(s1), new Float64Array(s2), new Float64Array(sM)]);
       } else {
-        const step = Math.floor(sn / target);
-        const m = Math.ceil(sn / step);
         const xs = new Float64Array(m), ys1 = new Float64Array(m), ys2 = new Float64Array(m), ysM = new Float64Array(m);
         for (let i = 0, j = 0; i < sn; i += step, j++) {
           xs[j] = (startIdx + i) * dt; ys1[j] = s1[i]; ys2[j] = s2[i]; ysM[j] = sM[i];
         }
         plot.setData([xs, ys1, ys2, ysM]);
+      }
+      // Force scale during active acquisition; allow manual zoom/pan when stopped
+      const amode = acquireModeRef.current;
+      const isAcquiring = amode === "running" || amode === "rolling" || amode === "single-armed" || amode === "averaging";
+      if (isAcquiring) {
+        const dataMax = sn > 0 ? (startIdx + (m - 1) * step) * dt : 0;
+        const delay = (horizontalRef.current.position / 100) * dataMax;
+        const posOffset = (triggerRef.current.source === "ch2" ? ch2VerticalRef.current.position : ch1VerticalRef.current.position) / 1000;
+        const yRange = ch1VerticalRef.current.vDiv * 10;
+        const yMin = -yRange / 2 + posOffset;
+        const yMax = yRange / 2 + posOffset;
+        plot.setScale('x', { min: delay, max: dataMax + delay });
+        plot.setScale('y', { min: yMin, max: yMax });
       }
     };
 
