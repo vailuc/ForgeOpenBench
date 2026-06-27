@@ -487,7 +487,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       const y = yOfs - (level - vmin) * yScale;
       ctx.save();
       ctx.strokeStyle = "#FF00FF";
-      ctx.lineWidth = 1;
+      ctx.lineWidth = 2;
       ctx.setLineDash([6, 4]);
       ctx.beginPath();
       ctx.moveTo(plotLeft, y);
@@ -753,8 +753,10 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       const rect = div.getBoundingClientRect();
       const my = e.clientY - rect.top;
       const triggerY = getTriggerLineY();
+      // eslint-disable-next-line no-console
+      if (triggerY !== null) console.log(`[DSO] trigger click: my=${my.toFixed(1)} triggerY=${triggerY.toFixed(1)} diff=${Math.abs(my - triggerY).toFixed(1)}`);
       // Check if clicking near trigger line (works even during acquisition)
-      if (triggerY !== null && Math.abs(my - triggerY) <= 10) {
+      if (triggerY !== null && Math.abs(my - triggerY) <= 20) {
         isDraggingTriggerRef.current = true;
         triggerDragPrevYRef.current = e.clientY;
         div.style.cursor = "ns-resize";
@@ -798,7 +800,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
         const triggerY = getTriggerLineY();
         const rect = div.getBoundingClientRect();
         const my = e.clientY - rect.top;
-        if (triggerY !== null && Math.abs(my - triggerY) <= 10) {
+        if (triggerY !== null && Math.abs(my - triggerY) <= 20) {
           div.style.cursor = "ns-resize";
         } else {
           div.style.cursor = "";
