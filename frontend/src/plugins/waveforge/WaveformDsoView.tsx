@@ -272,9 +272,9 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
   const phosphorEnabledRef = useRef(phosphorEnabled);
   useEffect(() => { phosphorEnabledRef.current = phosphorEnabled; }, [phosphorEnabled]);
   // Trace-echo phosphor: ring buffer of recent aligned traces
-  type TraceSnapshot = { xs: Float64Array; ys1: Float64Array; ys2: Float64Array };
+  type TraceSnapshot = { mode: "time" | "xy"; xs?: Float64Array; ys1: Float64Array; ys2: Float64Array };
   const phosphorTraces = useRef<TraceSnapshot[]>([]);
-  const MAX_PHOSPHOR_TRACES = 24;
+  const MAX_PHOSPHOR_TRACES = 8; // ~0.4s at 50ms throttle
   const forceTriggerRef = useRef<(() => void) | null>(null);
 
   // Derived view mode
@@ -409,20 +409,26 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       const ctx = u.ctx;
       const traces = phosphorTraces.current;
       const n = traces.length;
+      const currentX = u.data[0] as (Float64Array | number[] | undefined);
+      if (!currentX || currentX.length === 0) return;
       // Skip the newest trace — uPlot already drew it at full opacity.
-      // Only draw older traces as fading ghosts.
       for (let t = 0; t < n - 1; t++) {
         const snap = traces[t];
         const age = n - 1 - t; // 1 = oldest in buffer
         const opacity = Math.max(0, 1 - age / MAX_PHOSPHOR_TRACES) * 0.35;
         if (opacity <= 0) continue;
+        // Time mode: use current plot's x-data as template so all ghosts align horizontally
+        // XY mode: each snapshot carries its own x-values (CH1 voltage)
+        const xSrc = snap.mode === "time" ? currentX : snap.xs;
+        if (!xSrc) continue;
+        const len = Math.min(xSrc.length, snap.ys1.length, snap.ys2.length);
         // CH1 echo
         ctx.beginPath();
         ctx.strokeStyle = `rgba(245,158,11,${opacity})`;
         ctx.lineWidth = 1;
         let first = true;
-        for (let i = 0; i < snap.xs.length; i++) {
-          const x = u.valToPos(snap.xs[i], "x", true);
+        for (let i = 0; i < len; i++) {
+          const x = u.valToPos(xSrc[i], "x", true);
           const y = u.valToPos(snap.ys1[i], "y", true);
           if (x == null || y == null) continue;
           if (first) { ctx.moveTo(x, y); first = false; }
@@ -434,8 +440,8 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
         ctx.strokeStyle = `rgba(96,165,250,${opacity})`;
         ctx.lineWidth = 1;
         first = true;
-        for (let i = 0; i < snap.xs.length; i++) {
-          const x = u.valToPos(snap.xs[i], "x", true);
+        for (let i = 0; i < len; i++) {
+          const x = u.valToPos(xSrc[i], "x", true);
           const y = u.valToPos(snap.ys2[i], "y", true);
           if (x == null || y == null) continue;
           if (first) { ctx.moveTo(x, y); first = false; }
@@ -783,6 +789,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
         // Phosphor for XY: store as trace snapshots (x=chA, y=chB)
         if (phosphorEnabledRef.current) {
           const snap: TraceSnapshot = {
+            mode: "xy",
             xs: new Float64Array(a.slice(0, len)),
             ys1: new Float64Array(b.slice(0, len)),
             ys2: new Float64Array(len), // unused in XY
@@ -849,11 +856,10 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       }
       const sn = s1.length;
 
-      // Phosphor: capture aligned trace snapshot
+      // Phosphor: capture aligned trace snapshot (y-only; x-template comes from current plot)
       if (phosphorEnabledRef.current && sn > 0) {
-        const xs = Float64Array.from({ length: sn }, (_, i) => (startIdx + i) * dt);
         const snap: TraceSnapshot = {
-          xs,
+          mode: "time",
           ys1: new Float64Array(s1),
           ys2: new Float64Array(s2),
         };
