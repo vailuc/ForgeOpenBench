@@ -110,6 +110,60 @@ function autoset(ch1Buf: number[], ch2Buf: number[], rate: number, vDivSteps: nu
   return { vDiv, sDiv, triggerLevel };
 }
 
+/* ── FFT helper (radix-2 Cooley-Tukey) ─────────────────────────────── */
+function fft(buf: number[]): { real: number[]; imag: number[] } {
+  const n = buf.length;
+  if (n === 0) return { real: [], imag: [] };
+  // Pad to next power of 2
+  const N = 1 << Math.ceil(Math.log2(n));
+  const real = new Array(N).fill(0);
+  const imag = new Array(N).fill(0);
+  for (let i = 0; i < n; i++) real[i] = buf[i];
+  // Bit-reversal permutation
+  for (let i = 0, j = 0; i < N; i++) {
+    if (i < j) { [real[i], real[j]] = [real[j], real[i]]; }
+    let k = N >> 1;
+    while (k & j) { j &= ~k; k >>= 1; }
+    j |= k;
+  }
+  // Butterfly
+  for (let len = 2; len <= N; len <<= 1) {
+    const half = len >> 1;
+    const wStepReal = Math.cos(-Math.PI / half);
+    const wStepImag = Math.sin(-Math.PI / half);
+    for (let i = 0; i < N; i += len) {
+      let wReal = 1, wImag = 0;
+      for (let j = 0; j < half; j++) {
+        const uReal = real[i + j];
+        const uImag = imag[i + j];
+        const vReal = real[i + j + half] * wReal - imag[i + j + half] * wImag;
+        const vImag = real[i + j + half] * wImag + imag[i + j + half] * wReal;
+        real[i + j] = uReal + vReal;
+        imag[i + j] = uImag + vImag;
+        real[i + j + half] = uReal - vReal;
+        imag[i + j + half] = uImag - vImag;
+        const nextWReal = wReal * wStepReal - wImag * wStepImag;
+        wImag = wReal * wStepImag + wImag * wStepReal;
+        wReal = nextWReal;
+      }
+    }
+  }
+  return { real, imag };
+}
+
+function fftMagnitude(buf: number[], sampleRate: number): { freqs: number[]; mags: number[] } {
+  const { real, imag } = fft(buf);
+  const N = real.length;
+  const half = Math.floor(N / 2);
+  const freqs: number[] = [];
+  const mags: number[] = [];
+  for (let i = 0; i < half; i++) {
+    freqs.push(i * sampleRate / N);
+    mags.push(Math.sqrt(real[i] * real[i] + imag[i] * imag[i]) / N);
+  }
+  return { freqs, mags };
+}
+
 /* ── Main Component ────────────────────────────────────────────────── */
 export function WaveformDsoView({ transport, isActive, connected }: Props) {
   const plotDivRef = useRef<HTMLDivElement>(null);
@@ -193,6 +247,14 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
     enabled: false, sourceA: "ch1", sourceB: "ch2", op: "add",
   });
 
+  // Digital phosphor state
+  const [phosphorEnabled, setPhosphorEnabled] = useState(false);
+  const phosphorGrid = useRef<number[][]>([]);
+  const phosphorDecay = useRef(0.9); // decay factor per frame
+
+  // Derived view mode
+  const viewMode = math.enabled && math.op === "fft" ? "fft" : math.enabled && math.op === "xy" ? "xy" : "time";
+
   // Sample rate (shared)
   const [sampleRate, setSampleRate] = useState(4_000_000);
 
@@ -247,6 +309,9 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
     const W = container.offsetWidth || 600;
     const H = container.offsetHeight || 300;
 
+    const mode = viewMode;
+
+    // Axis formatters
     const timeAxisValues = (_u: uPlot, splits: number[]): string[] => {
       const maxVal = Math.max(...splits.map(Math.abs));
       if (maxVal < 1e-6) return splits.map(v => `${(v * 1e9).toFixed(0)}ns`);
@@ -254,15 +319,21 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       if (maxVal < 1)    return splits.map(v => `${(v * 1e3).toFixed(0)}ms`);
       return splits.map(v => `${v.toFixed(2)}s`);
     };
-
+    const freqAxisValues = (_u: uPlot, splits: number[]): string[] => {
+      const maxVal = Math.max(...splits);
+      if (maxVal >= 1e6) return splits.map(v => `${(v / 1e6).toFixed(1)}MHz`);
+      if (maxVal >= 1e3) return splits.map(v => `${(v / 1e3).toFixed(1)}kHz`);
+      return splits.map(v => `${v.toFixed(0)}Hz`);
+    };
     const useMV = vpp < 2;
     const voltAxisValues = (_u: uPlot, splits: number[]): string[] => {
       if (useMV) return splits.map(v => `${(v * 1e3).toFixed(0)}mV`);
       return splits.map(v => `${v.toFixed(2)}V`);
     };
 
-    // Draw trigger level line
+    // Draw trigger level line (time mode only)
     const drawTriggerLine = (u: uPlot) => {
+      if (mode !== "time") return;
       const level = triggerRef.current.level;
       const posOff = (triggerRef.current.source === "ch2" ? ch2Vertical.position : ch1Vertical.position) / 1000;
       const ctx = u.ctx;
@@ -275,7 +346,6 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       const yScale = plotH / (vmax - vmin);
       const yOfs = plotTop + plotH;
       const y = yOfs - (level - vmin) * yScale;
-
       ctx.save();
       ctx.strokeStyle = "#FF00FF";
       ctx.lineWidth = 1;
@@ -285,44 +355,112 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       ctx.lineTo(plotRight, y);
       ctx.stroke();
       ctx.setLineDash([]);
-
-      // Trigger level label
       ctx.fillStyle = "#FF00FF";
       ctx.font = "10px monospace";
       ctx.fillText(`${level.toFixed(2)}V`, plotRight - 45, y - 4);
       ctx.restore();
     };
 
-    // Position offsets: use trigger source channel position for grid center
-    const posOffset = (triggerRef.current.source === "ch2" ? ch2Vertical.position : ch1Vertical.position) / 1000;
-    const yMin = -vpp / 2 + posOffset;
-    const yMax = vpp / 2 + posOffset;
-
-    const opts: uPlot.Options = {
-      width: W, height: H,
-      padding: [0, 0, 0, 0],
-      scales: {
-        x: { time: false, range: (_u: uPlot, _dmin: number, dmax: number) => {
-          const delay = horizontal.position / 100 * dmax;
-          return [delay, dmax + delay];
-        }},
-        y: { range: [yMin, yMax] }
-      },
-      axes: [
-        { stroke: "#666688", grid: { stroke: "#1A1A2E" }, values: timeAxisValues },
-        { stroke: "#666688", grid: { stroke: "#1A1A2E" }, label: useMV ? "mV" : "V", values: voltAxisValues },
-      ],
-      series: [
-        {},
-        { stroke: "#F59E0B", width: 1.5, label: "CH1" },
-        { stroke: "#60A5FA", width: 1.5, label: "CH2", show: ch2Vertical.enabled },
-        { stroke: "#4ADE80", width: 1.5, label: "MATH", show: math.enabled },
-      ],
-      cursor: { show: true },
-      hooks: { drawClear: [drawTriggerLine] },
+    // Digital phosphor draw hook
+    const drawPhosphor = (u: uPlot) => {
+      if (!phosphorEnabled || phosphorGrid.current.length === 0) return;
+      const ctx = u.ctx;
+      const gridW = phosphorGrid.current[0]?.length ?? 0;
+      const gridH = phosphorGrid.current.length;
+      if (gridW === 0 || gridH === 0) return;
+      const plotLeft = u.bbox.left;
+      const plotTop = u.bbox.top;
+      const plotW = u.bbox.width;
+      const plotH = u.bbox.height;
+      const cellW = plotW / gridW;
+      const cellH = plotH / gridH;
+      let maxVal = 0;
+      for (let y = 0; y < gridH; y++) {
+        for (let x = 0; x < gridW; x++) {
+          if (phosphorGrid.current[y][x] > maxVal) maxVal = phosphorGrid.current[y][x];
+        }
+      }
+      if (maxVal < 1) return;
+      for (let y = 0; y < gridH; y++) {
+        for (let x = 0; x < gridW; x++) {
+          const v = phosphorGrid.current[y][x];
+          if (v < 1) continue;
+          const intensity = Math.min(1, v / maxVal * 2);
+          ctx.fillStyle = `rgba(100, 255, 100, ${intensity * 0.6})`;
+          ctx.fillRect(plotLeft + x * cellW, plotTop + y * cellH, cellW + 1, cellH + 1);
+        }
+      }
     };
+
+    let opts: uPlot.Options;
+
+    if (mode === "fft") {
+      opts = {
+        width: W, height: H,
+        padding: [0, 0, 0, 0],
+        scales: { x: { time: false }, y: { auto: true } },
+        axes: [
+          { stroke: "#666688", grid: { stroke: "#1A1A2E" }, label: "Frequency", values: freqAxisValues },
+          { stroke: "#666688", grid: { stroke: "#1A1A2E" }, label: "Magnitude" },
+        ],
+        series: [
+          {},
+          { stroke: "#4ADE80", width: 1.5, label: "FFT", show: true },
+          { stroke: "#60A5FA", width: 1.5, label: "CH2", show: false },
+          { stroke: "#4ADE80", width: 1.5, label: "MATH", show: false },
+        ],
+        cursor: { show: true },
+        hooks: { drawClear: [drawPhosphor] },
+      };
+    } else if (mode === "xy") {
+      opts = {
+        width: W, height: H,
+        padding: [0, 0, 0, 0],
+        scales: { x: { auto: true }, y: { auto: true } },
+        axes: [
+          { stroke: "#666688", grid: { stroke: "#1A1A2E" }, label: useMV ? "mV" : "V", values: voltAxisValues },
+          { stroke: "#666688", grid: { stroke: "#1A1A2E" }, label: useMV ? "mV" : "V", values: voltAxisValues },
+        ],
+        series: [
+          {},
+          { stroke: "#4ADE80", width: 1.5, label: "XY", show: true },
+          { stroke: "#60A5FA", width: 1.5, label: "CH2", show: false },
+          { stroke: "#4ADE80", width: 1.5, label: "MATH", show: false },
+        ],
+        cursor: { show: true },
+        hooks: { drawClear: [drawPhosphor] },
+      };
+    } else {
+      // Position offsets: use trigger source channel position for grid center
+      const posOffset = (triggerRef.current.source === "ch2" ? ch2Vertical.position : ch1Vertical.position) / 1000;
+      const yMin = -vpp / 2 + posOffset;
+      const yMax = vpp / 2 + posOffset;
+      opts = {
+        width: W, height: H,
+        padding: [0, 0, 0, 0],
+        scales: {
+          x: { time: false, range: (_u: uPlot, _dmin: number, dmax: number) => {
+            const delay = horizontal.position / 100 * dmax;
+            return [delay, dmax + delay];
+          }},
+          y: { range: [yMin, yMax] }
+        },
+        axes: [
+          { stroke: "#666688", grid: { stroke: "#1A1A2E" }, values: timeAxisValues },
+          { stroke: "#666688", grid: { stroke: "#1A1A2E" }, label: useMV ? "mV" : "V", values: voltAxisValues },
+        ],
+        series: [
+          {},
+          { stroke: "#F59E0B", width: 1.5, label: "CH1" },
+          { stroke: "#60A5FA", width: 1.5, label: "CH2", show: ch2Vertical.enabled },
+          { stroke: "#4ADE80", width: 1.5, label: "MATH", show: math.enabled },
+        ],
+        cursor: { show: true },
+        hooks: { drawClear: [drawTriggerLine, drawPhosphor] },
+      };
+    }
     plotRef.current = new uPlot(opts, [[], [], [], []], container);
-  }, [vpp, ch2Vertical.enabled, math.enabled, ch1Vertical.position, ch2Vertical.position, trigger.level, horizontal.position]);
+  }, [vpp, ch2Vertical.enabled, math.enabled, ch1Vertical.position, ch2Vertical.position, trigger.level, horizontal.position, viewMode, phosphorEnabled]);
 
   useEffect(() => {
     const div = plotDivRef.current;
@@ -390,12 +528,63 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       return false;
     };
 
-    // Render helper — always pass 4 arrays matching uPlot series count
+    // Render helper — mode-aware: time / fft / xy
     const renderNow = (ch1: number[], ch2: number[]) => {
       plotThrottleRef.current = nowPerf;
+      const plot = plotRef.current;
+      if (!plot) return;
       const n = ch1.length;
-      const width = plotRef.current?.width ?? 1000;
+      const width = plot.width ?? 1000;
       const target = Math.max(1000, width * 2);
+      const vm = viewMode;
+
+      if (vm === "fft") {
+        const src = mathRef.current.sourceA === "ch2" ? ch2 : ch1;
+        if (src.length < 16) return;
+        const { freqs, mags } = fftMagnitude(src, sampleRateRef.current);
+        const fn = freqs.length;
+        const fArr = new Float64Array(fn);
+        const mArr = new Float64Array(fn);
+        for (let i = 0; i < fn; i++) { fArr[i] = freqs[i]; mArr[i] = mags[i]; }
+        plot.setData([fArr, mArr, new Float64Array(fn), new Float64Array(fn)]);
+        return;
+      }
+
+      if (vm === "xy") {
+        const a = mathRef.current.sourceA === "ch2" ? ch2 : ch1;
+        const b = mathRef.current.sourceB === "ch2" ? ch2 : ch1;
+        const len = Math.min(a.length, b.length);
+        if (len < 2) return;
+        const xs = new Float64Array(len);
+        const ys = new Float64Array(len);
+        for (let i = 0; i < len; i++) { xs[i] = a[i]; ys[i] = b[i]; }
+        plot.setData([xs, ys, new Float64Array(len), new Float64Array(len)]);
+        // Phosphor accumulation for XY
+        if (phosphorEnabled) {
+          const gridW = 80, gridH = 60;
+          if (phosphorGrid.current.length !== gridH || (phosphorGrid.current[0]?.length ?? 0) !== gridW) {
+            phosphorGrid.current = Array.from({ length: gridH }, () => new Array(gridW).fill(0));
+          }
+          // Decay
+          for (let y = 0; y < gridH; y++) {
+            for (let x = 0; x < gridW; x++) {
+              phosphorGrid.current[y][x] *= phosphorDecay.current;
+            }
+          }
+          // Accumulate hits
+          const xmin = Math.min(...a), xmax = Math.max(...a);
+          const ymin = Math.min(...b), ymax = Math.max(...b);
+          const xr = xmax - xmin || 1, yr = ymax - ymin || 1;
+          for (let i = 0; i < len; i++) {
+            const gx = Math.min(gridW - 1, Math.max(0, Math.floor((a[i] - xmin) / xr * gridW)));
+            const gy = Math.min(gridH - 1, Math.max(0, Math.floor((b[i] - ymin) / yr * gridH)));
+            phosphorGrid.current[gy][gx] += 1;
+          }
+        }
+        return;
+      }
+
+      // time mode
       const doMath = mathRef.current.enabled && mathRef.current.op !== "fft" && mathRef.current.op !== "xy";
       if (doMath) {
         const a = mathRef.current.sourceA === "ch2" ? ch2 : ch1;
@@ -413,13 +602,13 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       const mathArr = doMath ? mathBuf.current : new Array(n).fill(0);
       if (n <= target) {
         const xs = Float64Array.from({ length: n }, (_, i) => i * dt);
-        plotRef.current?.setData([xs, new Float64Array(ch1), new Float64Array(ch2), new Float64Array(mathArr)]);
+        plot.setData([xs, new Float64Array(ch1), new Float64Array(ch2), new Float64Array(mathArr)]);
       } else {
         const step = Math.floor(n / target);
         const m = Math.ceil(n / step);
         const xs = new Float64Array(m), ys1 = new Float64Array(m), ys2 = new Float64Array(m), ysM = new Float64Array(m);
         for (let i = 0, j = 0; i < n; i += step, j++) { xs[j] = i * dt; ys1[j] = ch1[i]; ys2[j] = ch2[i]; ysM[j] = mathArr[i]; }
-        plotRef.current?.setData([xs, ys1, ys2, ysM]);
+        plot.setData([xs, ys1, ys2, ysM]);
       }
     };
 
@@ -641,6 +830,18 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
             onChange={setMath}
             disabled={false}
           />
+          {/* Display / Phosphor */}
+          <div className="flex items-center gap-1.5 border-t border-fob-border pt-1">
+            <label className="flex items-center gap-1 text-[10px] text-fob-text-dim">
+              <input
+                type="checkbox"
+                checked={phosphorEnabled}
+                onChange={(e) => setPhosphorEnabled(e.target.checked)}
+                className="accent-fob-orange"
+              />
+              Digital Phosphor
+            </label>
+          </div>
         </div>
       </div>
 
