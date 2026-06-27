@@ -712,6 +712,10 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
 
   // Data push handler
   const chunkTimes = useRef<number[]>([]);
+  const renderCount = useRef(0);
+  const renderRateT0 = useRef(0);
+  const totalBytes = useRef(0);
+  const dataAgeT0 = useRef(0);
   const pushData = useCallback((chunk: UsbDataChunk) => {
     const bytes = chunk.data ?? Uint8Array.from(atob(chunk.b64), c => c.charCodeAt(0));
     const gain = vpp / 256;
@@ -771,6 +775,18 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
     if (mode === "stopped" || mode === "single-held") return;
     chunkTimes.current.push(chunkT0);
     if (chunkTimes.current.length > 20) chunkTimes.current.shift();
+
+    // Data-age: compare sample-time received vs wall-time elapsed
+    totalBytes.current += bytes.length;
+    if (dataAgeT0.current === 0) dataAgeT0.current = performance.now();
+    const wallMs = performance.now() - dataAgeT0.current;
+    const sampleMs = (totalBytes.current / 2) / (chunk.rate || 4_000_000) * 1000; // samples = bytes/2 (interleaved), time = samples/rate
+    if (wallMs >= 1000) {
+      // eslint-disable-next-line no-console
+      console.log(`[DSO] data age: received ${sampleMs.toFixed(0)}ms of sample data in ${wallMs.toFixed(0)}ms wall time (diff=${(sampleMs - wallMs).toFixed(0)}ms)`);
+      totalBytes.current = 0;
+      dataAgeT0.current = performance.now();
+    }
 
     // Trigger detection helper — returns crossing index or -1
     const findTriggerIndex = (buf: number[]): number => {
@@ -957,6 +973,17 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
         plot.setScale('x', { min: delay, max: dataMax + delay });
         plot.setScale('y', { min: yMin, max: yMax });
       }
+      // Render-rate diagnostics
+      renderCount.current++;
+      const rrNow = performance.now();
+      if (renderRateT0.current === 0) renderRateT0.current = rrNow;
+      if (rrNow - renderRateT0.current >= 1000) {
+        // eslint-disable-next-line no-console
+        console.log(`[DSO] render rate: ${renderCount.current}/s`);
+        renderCount.current = 0;
+        renderRateT0.current = rrNow;
+      }
+
       const renderElapsed = performance.now() - renderT0;
       if (renderElapsed > 100) {
         // eslint-disable-next-line no-console
