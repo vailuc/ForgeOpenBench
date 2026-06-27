@@ -264,13 +264,14 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
     // Draw trigger level line
     const drawTriggerLine = (u: uPlot) => {
       const level = triggerRef.current.level;
+      const posOff = (triggerRef.current.source === "ch2" ? ch2Vertical.position : ch1Vertical.position) / 1000;
       const ctx = u.ctx;
       const plotTop = u.bbox.top;
       const plotH = u.bbox.height;
       const plotLeft = u.bbox.left;
       const plotRight = plotLeft + u.bbox.width;
-      const vmin = -vpp / 2;
-      const vmax = vpp / 2;
+      const vmin = -vpp / 2 + posOff;
+      const vmax = vpp / 2 + posOff;
       const yScale = plotH / (vmax - vmin);
       const yOfs = plotTop + plotH;
       const y = yOfs - (level - vmin) * yScale;
@@ -292,10 +293,21 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       ctx.restore();
     };
 
+    // Position offsets: use trigger source channel position for grid center
+    const posOffset = (triggerRef.current.source === "ch2" ? ch2Vertical.position : ch1Vertical.position) / 1000;
+    const yMin = -vpp / 2 + posOffset;
+    const yMax = vpp / 2 + posOffset;
+
     const opts: uPlot.Options = {
       width: W, height: H,
       padding: [0, 0, 0, 0],
-      scales: { x: { time: false }, y: { range: [-vpp / 2, vpp / 2] } },
+      scales: {
+        x: { time: false, range: (_u: uPlot, _dmin: number, dmax: number) => {
+          const delay = horizontal.position / 100 * dmax;
+          return [delay, dmax + delay];
+        }},
+        y: { range: [yMin, yMax] }
+      },
       axes: [
         { stroke: "#666688", grid: { stroke: "#1A1A2E" }, values: timeAxisValues },
         { stroke: "#666688", grid: { stroke: "#1A1A2E" }, label: useMV ? "mV" : "V", values: voltAxisValues },
@@ -310,7 +322,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       hooks: { drawClear: [drawTriggerLine] },
     };
     plotRef.current = new uPlot(opts, [[], [], [], []], container);
-  }, [vpp, ch2Vertical.enabled, math.enabled]);
+  }, [vpp, ch2Vertical.enabled, math.enabled, ch1Vertical.position, ch2Vertical.position, trigger.level, horizontal.position]);
 
   useEffect(() => {
     const div = plotDivRef.current;
@@ -329,8 +341,8 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
     const gain = vpp / 256;
 
     for (let i = 0; i + 1 < bytes.length; i += 2) {
-      let v1 = (bytes[i]   - 128) * gain + ch1VerticalRef.current.position / 1000;
-      let v2 = (bytes[i+1] - 128) * gain + ch2VerticalRef.current.position / 1000;
+      let v1 = (bytes[i]   - 128) * gain;
+      let v2 = (bytes[i+1] - 128) * gain;
 
       if (ch1VerticalRef.current.invert) v1 = -v1;
       if (ch2VerticalRef.current.invert) v2 = -v2;
