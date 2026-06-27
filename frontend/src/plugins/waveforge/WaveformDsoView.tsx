@@ -329,18 +329,17 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
   useEffect(() => { triggerRef.current = trigger; }, [trigger]);
   useEffect(() => {
     sampleRateRef.current = sampleRate;
-    // If actively streaming, reconfigure the backend with the new sample rate
+    // If actively streaming, just reconfigure the backend with the new sample rate.
+    // Skip stop/start — those RPCs can timeout while the backend is busy streaming.
     if (dataOffRef.current) {
       (async () => {
         try {
-          await transport.stop();
           await transport.configure({
             mode: "dso",
             sample_rate_hz: sampleRate,
             sample_width: 8,
             voltage_range: vpp,
           });
-          await transport.start();
         } catch (e) {
           console.warn("[DSO] sample-rate reconfigure failed", e);
         }
