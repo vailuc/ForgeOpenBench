@@ -178,6 +178,9 @@ function saveScopeState(state: Record<string, unknown>) {
   try { sessionStorage.setItem(SCOPE_STATE_KEY, JSON.stringify(state)); } catch {}
 }
 
+const PHOSPHOR_GRID_W = 160;
+const PHOSPHOR_GRID_H = 120;
+
 /* ── Main Component ────────────────────────────────────────────────── */
 export function WaveformDsoView({ transport, isActive, connected }: Props) {
   const plotDivRef = useRef<HTMLDivElement>(null);
@@ -420,9 +423,9 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       for (let y = 0; y < gridH; y++) {
         for (let x = 0; x < gridW; x++) {
           const v = phosphorGrid.current[y][x];
-          if (v < 1) continue;
+          if (v < 0.5) continue;
           const intensity = Math.min(1, v / maxVal * 2);
-          ctx.fillStyle = `rgba(100, 255, 100, ${intensity * 0.6})`;
+          ctx.fillStyle = `rgba(150, 255, 120, ${intensity * 0.2})`;
           ctx.fillRect(plotLeft + x * cellW, plotTop + y * cellH, cellW + 1, cellH + 1);
         }
       }
@@ -732,7 +735,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
     const detectTrigger = (buf: number[]): boolean => findTriggerIndex(buf) >= 0;
 
     // Render helper — mode-aware: time / fft / xy
-    const renderNow = (ch1: number[], ch2: number[]) => {
+    const renderNow = (ch1: number[], ch2: number[], opts?: { phosphorOnly?: boolean }) => {
       forceTriggerRef.current = () => renderNow(ch1Buf.current, ch2Buf.current);
       plotThrottleRef.current = nowPerf;
       const plot = plotRef.current;
@@ -765,7 +768,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
         plot.setData([xs, ys, new Float64Array(len), new Float64Array(len)]);
         // Phosphor accumulation for XY
         if (phosphorEnabledRef.current) {
-          const gridW = 80, gridH = 60;
+          const gridW = PHOSPHOR_GRID_W, gridH = PHOSPHOR_GRID_H;
           if (phosphorGrid.current.length !== gridH || (phosphorGrid.current[0]?.length ?? 0) !== gridW) {
             phosphorGrid.current = Array.from({ length: gridH }, () => new Array(gridW).fill(0));
           }
@@ -851,7 +854,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
 
       // Phosphor accumulation for time mode
       if (phosphorEnabledRef.current && sn > 0) {
-        const gridW = 80, gridH = 60;
+        const gridW = PHOSPHOR_GRID_W, gridH = PHOSPHOR_GRID_H;
         if (phosphorGrid.current.length !== gridH || (phosphorGrid.current[0]?.length ?? 0) !== gridW) {
           phosphorGrid.current = Array.from({ length: gridH }, () => new Array(gridW).fill(0));
         }
@@ -876,6 +879,11 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
           phosphorGrid.current[gridH - 1 - gy1][gx] += 1;
           phosphorGrid.current[gridH - 1 - gy2][gx] += 0.7;
         }
+      }
+
+      if (opts?.phosphorOnly) {
+        plot.redraw(false, false);
+        return;
       }
 
       // Render aligned or full
@@ -996,10 +1004,9 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
             smartTriggerCountRef.current = 0;
           }
         } else {
-          // Locked: triggered updates with phosphor persistence
-          // Render when triggered (throttled) so jitter creates a fading cloud
+          // Locked: trace frozen, phosphor accumulates jitter as fading cloud
           if (triggered) {
-            renderNow(ch1Buf.current, ch2Buf.current);
+            renderNow(ch1Buf.current, ch2Buf.current, { phosphorOnly: true });
             smartMissCountRef.current = 0;
           } else {
             smartMissCountRef.current++;
