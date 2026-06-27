@@ -378,7 +378,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       return false;
     };
 
-    // Render helper
+    // Render helper — always pass 4 arrays matching uPlot series count
     const renderNow = (ch1: number[], ch2: number[]) => {
       plotThrottleRef.current = nowPerf;
       const n = ch1.length;
@@ -398,20 +398,16 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
           else if (op === "div") mathBuf.current[i] = bv !== 0 ? av / bv : 0;
         }
       }
+      const mathArr = doMath ? mathBuf.current : new Array(n).fill(0);
       if (n <= target) {
         const xs = Float64Array.from({ length: n }, (_, i) => i * dt);
-        if (doMath) plotRef.current?.setData([xs, new Float64Array(ch1), new Float64Array(ch2), new Float64Array(mathBuf.current)]);
-        else plotRef.current?.setData([xs, new Float64Array(ch1), new Float64Array(ch2)]);
+        plotRef.current?.setData([xs, new Float64Array(ch1), new Float64Array(ch2), new Float64Array(mathArr)]);
       } else {
         const step = Math.floor(n / target);
         const m = Math.ceil(n / step);
-        const xs = new Float64Array(m), ys1 = new Float64Array(m), ys2 = new Float64Array(m);
-        for (let i = 0, j = 0; i < n; i += step, j++) { xs[j] = i * dt; ys1[j] = ch1[i]; ys2[j] = ch2[i]; }
-        if (doMath) {
-          const ysM = new Float64Array(m);
-          for (let i = 0, j = 0; i < n; i += step, j++) ysM[j] = mathBuf.current[i];
-          plotRef.current?.setData([xs, ys1, ys2, ysM]);
-        } else plotRef.current?.setData([xs, ys1, ys2]);
+        const xs = new Float64Array(m), ys1 = new Float64Array(m), ys2 = new Float64Array(m), ysM = new Float64Array(m);
+        for (let i = 0, j = 0; i < n; i += step, j++) { xs[j] = i * dt; ys1[j] = ch1[i]; ys2[j] = ch2[i]; ysM[j] = mathArr[i]; }
+        plotRef.current?.setData([xs, ys1, ys2, ysM]);
       }
     };
 
@@ -577,11 +573,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
   };
   const handleClear = () => {
     ch1Buf.current = []; ch2Buf.current = []; mathBuf.current = [];
-    if (math.enabled) {
-      plotRef.current?.setData([[], [], [], []]);
-    } else {
-      plotRef.current?.setData([[], [], []]);
-    }
+    plotRef.current?.setData([[], [], [], []]);
     setCh1Meas({ vpp: 0, dc: 0, vrms: 0, freq: 0, period: 0, riseTime: 0, fallTime: 0, dutyCycle: 0, positiveWidth: 0, negativeWidth: 0 });
     setCh2Meas({ vpp: 0, dc: 0, vrms: 0, freq: 0, period: 0, riseTime: 0, fallTime: 0, dutyCycle: 0, positiveWidth: 0, negativeWidth: 0 });
   };
