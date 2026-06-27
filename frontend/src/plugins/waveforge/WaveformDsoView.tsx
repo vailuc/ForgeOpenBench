@@ -749,10 +749,12 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
     const onMouseDown = (e: MouseEvent) => {
       if (e.button !== 0) return;
       const plot = plotRef.current;
+      const triggerY = getTriggerLineY();
+      // eslint-disable-next-line no-console
+      console.log(`[DSO] mousedown: plot=${!!plot} viewMode=${viewMode} triggerY=${triggerY?.toFixed(1) ?? 'null'}`);
       if (!plot) return;
       const rect = div.getBoundingClientRect();
       const my = e.clientY - rect.top;
-      const triggerY = getTriggerLineY();
       // eslint-disable-next-line no-console
       if (triggerY !== null) console.log(`[DSO] trigger click: my=${my.toFixed(1)} triggerY=${triggerY.toFixed(1)} diff=${Math.abs(my - triggerY).toFixed(1)}`);
       // Check if clicking near trigger line (works even during acquisition)
