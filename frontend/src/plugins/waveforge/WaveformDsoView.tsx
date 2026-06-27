@@ -6,8 +6,10 @@ import type { UsbDataChunk } from "./usbTypes";
 import { AcquireToolbar } from "./AcquireToolbar";
 import { VerticalPanel } from "./VerticalPanel";
 import { HorizontalPanel } from "./HorizontalPanel";
+import { TriggerPanel } from "./TriggerPanel";
+import { MathPanel } from "./MathPanel";
 import { MeasurementBar } from "./MeasurementBar";
-import type { Measurements, VerticalState, HorizontalState, TriggerState, MeasurementKey } from "./scopeTypes";
+import type { Measurements, VerticalState, HorizontalState, TriggerState, MathState, MeasurementKey } from "./scopeTypes";
 import { SAMPLE_RATES_DSO, formatSDiv, vDivToVpp, sDivToWindowMs } from "./scopeConstants";
 
 /* ── Props ─────────────────────────────────────────────────────────── */
@@ -150,6 +152,11 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
   const [trigger, setTrigger] = useState<TriggerState>({
     source: "ch1", level: 0, slope: "rise",
     mode: "auto", coupling: "dc", holdoff: 0,
+  });
+
+  // Math state
+  const [math, setMath] = useState<MathState>({
+    enabled: false, sourceA: "ch1", sourceB: "ch2", op: "add",
   });
 
   // Sample rate (shared)
@@ -439,6 +446,12 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
     // In software trigger mode, just re-render current buffer aligned to trigger
     // TODO: Phase 2
   };
+  const handleSetTrigger50Percent = () => {
+    const buf = ch1Buf.current.length > 10 ? ch1Buf.current : ch2Buf.current;
+    if (buf.length < 10) return;
+    const mid = (Math.max(...buf) + Math.min(...buf)) / 2;
+    setTrigger(prev => ({ ...prev, level: mid }));
+  };
   const handleClear = () => {
     ch1Buf.current = []; ch2Buf.current = [];
     plotRef.current?.setData([[], [], []]);
@@ -486,9 +499,17 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
             onSampleRateChange={setSampleRate}
             disabled={false}
           />
-          {/* TODO: Phase 2 — TriggerPanel */}
-          {/* TODO: Phase 2 — MathPanel */}
-          {/* TODO: Phase 2 — MeasurementsPanel */}
+          <TriggerPanel
+            state={trigger}
+            onChange={setTrigger}
+            onSet50Percent={handleSetTrigger50Percent}
+            disabled={false}
+          />
+          <MathPanel
+            state={math}
+            onChange={setMath}
+            disabled={false}
+          />
         </div>
       </div>
 
