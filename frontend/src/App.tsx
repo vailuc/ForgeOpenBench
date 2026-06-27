@@ -69,10 +69,13 @@ function useBridgeOnline() {
   return online;
 }
 
+const PLUGIN_KEY = "forge:lastPlugin";
+
 function App() {
   const connected = useSettingsStore((s) => s.connected);
   const config = useSettingsStore((s) => s.config);
-  const [activePlugin, setActivePlugin] = useState("dashboard");
+  const savedPlugin = (typeof sessionStorage !== "undefined" ? sessionStorage.getItem(PLUGIN_KEY) : null) ?? "dashboard";
+  const [activePlugin, setActivePlugin] = useState(savedPlugin);
   const [bottomPanelOpen, setBottomPanelOpen] = useState(false);
   const [bottomPanelTab, setBottomPanelTab] = useState<"shell" | "events" | "logs" | "serial">("shell");
   const [fileTreeOpen, setFileTreeOpen] = useState(false);
@@ -88,6 +91,11 @@ function App() {
   const activePluginRef = useRef(activePlugin);
   const isVertical = useLayoutDetection();
   useEffect(() => { activePluginRef.current = activePlugin; }, [activePlugin]);
+
+  // Persist active plugin so F5 returns to the same view
+  useEffect(() => {
+    if (typeof sessionStorage !== "undefined") sessionStorage.setItem(PLUGIN_KEY, activePlugin);
+  }, [activePlugin]);
 
   // Keyboard shortcuts: Ctrl+1-6 plugins, Ctrl+' panel, F11, ?, Ctrl+,
   useEffect(() => {
@@ -147,7 +155,9 @@ function App() {
     const ui = config?.ui as Record<string, unknown> | undefined;
     if (!hasSetDefault.current && ui?.defaultPlugin) {
       hasSetDefault.current = true;
-      setActivePlugin(String(ui.defaultPlugin));
+      // Only apply config default on fresh sessions, not on F5 restores
+      const restored = typeof sessionStorage !== "undefined" && sessionStorage.getItem(PLUGIN_KEY);
+      if (!restored) setActivePlugin(String(ui.defaultPlugin));
     }
   }, [config]);
 
