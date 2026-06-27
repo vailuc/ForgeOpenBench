@@ -532,20 +532,21 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
     const nowPerf = performance.now();
     if (mode === "stopped" || mode === "single-held") return;
 
-    // Trigger detection helper
-    const detectTrigger = (buf: number[]): boolean => {
-      if (buf.length < 100) return false;
+    // Trigger detection helper — returns crossing index or -1
+    const findTriggerIndex = (buf: number[]): number => {
+      if (buf.length < 100) return -1;
       const level = triggerRef.current.level;
       const slope = triggerRef.current.slope;
       const checkStart = Math.max(0, buf.length - 500);
       for (let i = checkStart + 1; i < buf.length; i++) {
         const prev = buf[i - 1], curr = buf[i];
-        if (slope === "rise" && prev <= level && curr > level) return true;
-        if (slope === "fall" && prev >= level && curr < level) return true;
-        if (slope === "both" && ((prev <= level && curr > level) || (prev >= level && curr < level))) return true;
+        if (slope === "rise" && prev <= level && curr > level) return i;
+        if (slope === "fall" && prev >= level && curr < level) return i;
+        if (slope === "both" && ((prev <= level && curr > level) || (prev >= level && curr < level))) return i;
       }
-      return false;
+      return -1;
     };
+    const detectTrigger = (buf: number[]): boolean => findTriggerIndex(buf) >= 0;
 
     // Render helper — mode-aware: time / fft / xy
     const renderNow = (ch1: number[], ch2: number[]) => {
@@ -637,14 +638,58 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
         }
       }
       const mathArr = doMath ? mathBuf.current : new Array(rn).fill(0);
-      if (rn <= target || isPeak) {
-        const xs = Float64Array.from({ length: rn }, (_, i) => i * dt);
-        plot.setData([xs, new Float64Array(r1), new Float64Array(r2), new Float64Array(mathArr)]);
+
+      // Trigger alignment: find trigger in source buffer and center window
+      const tSrc = triggerRef.current.source === "ch2" ? r2 : r1;
+      const tIdx = findTriggerIndex(tSrc);
+      const alignTrigger = tIdx >= 0 && rn > target;
+      let s1 = r1, s2 = r2, sM = mathArr;
+      let startIdx = 0;
+      if (alignTrigger) {
+        const preTrigger = Math.floor(target * 0.25); // trigger at 25% from left
+        const postTrigger = target - preTrigger;
+        startIdx = Math.max(0, tIdx - preTrigger);
+        const endIdx = Math.min(rn, tIdx + postTrigger);
+        s1 = r1.slice(startIdx, endIdx);
+        s2 = r2.slice(startIdx, endIdx);
+        sM = mathArr.slice(startIdx, endIdx);
+      }
+      const sn = s1.length;
+
+      // Phosphor accumulation for time mode
+      if (phosphorEnabled && sn > 0) {
+        const gridW = 80, gridH = 60;
+        if (phosphorGrid.current.length !== gridH || (phosphorGrid.current[0]?.length ?? 0) !== gridW) {
+          phosphorGrid.current = Array.from({ length: gridH }, () => new Array(gridW).fill(0));
+        }
+        for (let y = 0; y < gridH; y++) {
+          for (let x = 0; x < gridW; x++) {
+            phosphorGrid.current[y][x] *= phosphorDecay.current;
+          }
+        }
+        const vmin = Math.min(...s1, ...s2);
+        const vmax = Math.max(...s1, ...s2);
+        const vr = vmax - vmin || 1;
+        for (let i = 0; i < sn; i++) {
+          const gx = Math.min(gridW - 1, Math.max(0, Math.floor(i / sn * gridW)));
+          const gy1 = Math.min(gridH - 1, Math.max(0, Math.floor((s1[i] - vmin) / vr * gridH)));
+          const gy2 = Math.min(gridH - 1, Math.max(0, Math.floor((s2[i] - vmin) / vr * gridH)));
+          phosphorGrid.current[gridH - 1 - gy1][gx] += 1;
+          phosphorGrid.current[gridH - 1 - gy2][gx] += 0.7;
+        }
+      }
+
+      // Render aligned or full
+      if (sn <= target || isPeak) {
+        const xs = Float64Array.from({ length: sn }, (_, i) => (startIdx + i) * dt);
+        plot.setData([xs, new Float64Array(s1), new Float64Array(s2), new Float64Array(sM)]);
       } else {
-        const step = Math.floor(rn / target);
-        const m = Math.ceil(rn / step);
+        const step = Math.floor(sn / target);
+        const m = Math.ceil(sn / step);
         const xs = new Float64Array(m), ys1 = new Float64Array(m), ys2 = new Float64Array(m), ysM = new Float64Array(m);
-        for (let i = 0, j = 0; i < rn; i += step, j++) { xs[j] = i * dt; ys1[j] = r1[i]; ys2[j] = r2[i]; ysM[j] = mathArr[i]; }
+        for (let i = 0, j = 0; i < sn; i += step, j++) {
+          xs[j] = (startIdx + i) * dt; ys1[j] = s1[i]; ys2[j] = s2[i]; ysM[j] = sM[i];
+        }
         plot.setData([xs, ys1, ys2, ysM]);
       }
     };
