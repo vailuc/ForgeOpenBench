@@ -12,14 +12,22 @@ import { useSettingsStore } from "../../core/settings_store";
 type Tab = "la" | "dso";
 type ConnectionState = "disconnected" | "connecting" | "connected";
 const EMPTY_CFG: Record<string, unknown> = {};
+const TAB_KEY = "waveforge:lastTab";
+const SESSION_KEY = "waveforge:sessionActive";
 
 function WaveForgeApp({ bus: _bus }: { bus: PluginBus }) {
-  const [activeTab, setActiveTab] = useState<Tab>("la");
+  const savedTab = (typeof sessionStorage !== "undefined" ? sessionStorage.getItem(TAB_KEY) : null) as Tab | null;
+  const [activeTab, setActiveTab] = useState<Tab>(savedTab ?? "la");
+  // Track whether this session was restored (F5) vs fresh (new tab / hard refresh)
+  const wasPreviouslyActive = typeof sessionStorage !== "undefined" && sessionStorage.getItem(SESSION_KEY) === "1";
+  if (typeof sessionStorage !== "undefined") sessionStorage.setItem(SESSION_KEY, "1");
+  const scopeNeedsResetRef = useRef(wasPreviouslyActive);
   const [connState, setConnState] = useState<ConnectionState>("disconnected");
   const [serverOnline, setServerOnline] = useState(false);
   const [devices, setDevices] = useState<UsbDeviceInfo[]>([]);
   const [selectedDevice, setSelectedDevice] = useState<UsbDeviceInfo | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
   const cfg = useSettingsStore((s) => (s.config?.waveforge as Record<string, unknown> | undefined) ?? EMPTY_CFG);
   const defaultDevicePattern = (cfg.defaultDevice as string | undefined) ?? "";
   const transportRef = useRef(getSharedUsbTransport());
@@ -113,6 +121,34 @@ function WaveForgeApp({ bus: _bus }: { bus: PluginBus }) {
   }, []);
 
   const connected = connState === "connected";
+
+  // Force disconnect on first scope visit after a refresh if still connected.
+  // The USB stream state from before the refresh is stale; a reconnect gives a clean start.
+  const resettingRef = useRef(false);
+  useEffect(() => {
+    if (activeTab === "dso" && connected && scopeNeedsResetRef.current && !resettingRef.current) {
+      resettingRef.current = true;
+      setIsResetting(true);
+      scopeNeedsResetRef.current = false;
+      (async () => {
+        try {
+          await disconnect();
+          if (selectedDeviceRef.current) {
+            await new Promise(r => setTimeout(r, 150));
+            await connectRef.current();
+          }
+        } finally {
+          resettingRef.current = false;
+          setIsResetting(false);
+        }
+      })();
+    }
+  }, [activeTab, connected, disconnect]);
+
+  // Persist active tab so F5 returns to the same view
+  useEffect(() => {
+    if (typeof sessionStorage !== "undefined") sessionStorage.setItem(TAB_KEY, activeTab);
+  }, [activeTab]);
 
   return (
     <div className="flex flex-col h-full bg-fob-surface text-fob-text font-mono text-xs select-none">
@@ -215,7 +251,7 @@ function WaveForgeApp({ bus: _bus }: { bus: PluginBus }) {
           <WaveformLaView transport={transportRef.current} isActive={activeTab === "la"} connected={connected} />
         </div>
         <div className={`absolute inset-0 ${activeTab === "dso" ? "z-10" : "z-0 hidden"}`}>
-          <WaveformDsoView transport={transportRef.current} isActive={activeTab === "dso"} connected={connected} />
+          <WaveformDsoView transport={transportRef.current} isActive={activeTab === "dso"} connected={connected} resetting={isResetting} />
         </div>
       </div>
     </div>

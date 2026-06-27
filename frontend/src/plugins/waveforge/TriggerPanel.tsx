@@ -107,9 +107,10 @@ export function TriggerPanel({ state, onChange, disabled, onSet50Percent }: Prop
           onChange={(e) => onChange({ ...state, mode: e.target.value as TriggerState["mode"] })}
           disabled={disabled}
         >
-          <option value="auto">Auto</option>
+          <option value="smart">Auto</option>
           <option value="normal">Normal</option>
           <option value="single">Single</option>
+          <option value="auto">Free</option>
         </select>
       </div>
 
