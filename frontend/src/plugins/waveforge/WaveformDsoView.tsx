@@ -327,7 +327,35 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
   useEffect(() => { ch2VerticalRef.current = ch2Vertical; }, [ch2Vertical]);
   useEffect(() => { horizontalRef.current = horizontal; }, [horizontal]);
   useEffect(() => { triggerRef.current = trigger; }, [trigger]);
-  useEffect(() => { sampleRateRef.current = sampleRate; }, [sampleRate]);
+  useEffect(() => {
+    sampleRateRef.current = sampleRate;
+    // If actively streaming, reconfigure the backend with the new sample rate
+    if (dataOffRef.current) {
+      (async () => {
+        try {
+          await transport.stop();
+          await transport.configure({
+            mode: "dso",
+            sample_rate_hz: sampleRate,
+            sample_width: 8,
+            voltage_range: vpp,
+          });
+          await transport.start();
+        } catch (e) {
+          console.warn("[DSO] sample-rate reconfigure failed", e);
+        }
+      })();
+      // Clear buffers so old-rate data doesn't mix with new-rate data
+      ch1Buf.current = [];
+      ch2Buf.current = [];
+      mathBuf.current = [];
+      phosphorTraces.current = [];
+      filtRing1.current = [];
+      filtRing2.current = [];
+      plotThrottleRef.current = 0;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sampleRate]);
   // Clear phosphor history when trigger mode changes — old ghosts don't match new mode behavior
   useEffect(() => {
     phosphorTraces.current = [];
