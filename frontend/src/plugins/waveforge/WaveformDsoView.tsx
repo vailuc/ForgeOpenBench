@@ -10,7 +10,7 @@ import { TriggerPanel } from "./TriggerPanel";
 import { MathPanel } from "./MathPanel";
 import { MeasurementBar } from "./MeasurementBar";
 import type { Measurements, VerticalState, HorizontalState, TriggerState, MathState, MeasurementKey } from "./scopeTypes";
-import { SAMPLE_RATES_DSO, formatSDiv, vDivToVpp, sDivToWindowMs } from "./scopeConstants";
+import { SAMPLE_RATES_DSO, VDIV_STEPS, SDIV_STEPS, formatSDiv, vDivToVpp, sDivToWindowMs } from "./scopeConstants";
 
 /* ── Props ─────────────────────────────────────────────────────────── */
 interface Props {
@@ -93,23 +93,54 @@ function calcMeasurements(buf: number[], rate: number): Measurements {
 }
 
 /* ── Autoset: compute ideal V/div, s/div, trigger level ───────────── */
-function autoset(ch1Buf: number[], ch2Buf: number[], rate: number, vDivSteps: number[], sDivSteps: number[]) {
-  const useCh1 = ch1Buf.length > 10;
+function signalVariance(buf: number[]): number {
+  if (buf.length < 10) return 0;
+  const mean = buf.reduce((a, b) => a + b, 0) / buf.length;
+  return Math.sqrt(buf.reduce((a, b) => a + (b - mean) ** 2, 0) / buf.length);
+}
+function findNearestStep(target: number, steps: number[]): number {
+  if (steps.length === 0) return target;
+  let best = steps[0];
+  let bestDiff = Math.abs(Math.log10(target) - Math.log10(steps[0]));
+  for (const s of steps) {
+    const diff = Math.abs(Math.log10(target) - Math.log10(s));
+    if (diff < bestDiff) { bestDiff = diff; best = s; }
+  }
+  return best;
+}
+function autoset(
+  ch1Buf: number[], ch2Buf: number[], rate: number,
+  vDivSteps: number[], sDivSteps: number[]
+) {
+  // Detect which channel has a real signal (variance above noise floor)
+  const ch1Var = signalVariance(ch1Buf);
+  const ch2Var = signalVariance(ch2Buf);
+  const NOISE_FLOOR = 0.01; // 10mV
+  const hasCh1 = ch1Buf.length >= 10 && ch1Var > NOISE_FLOOR;
+  const hasCh2 = ch2Buf.length >= 10 && ch2Var > NOISE_FLOOR;
+  const useCh1 = hasCh1 || (!hasCh2 && ch1Buf.length > ch2Buf.length);
   const buf = useCh1 ? ch1Buf : ch2Buf;
   if (buf.length < 10) return null;
 
   const vpp = Math.max(...buf) - Math.min(...buf);
   const targetVDiv = vpp / 5; // ~5 divisions of signal
-  const vDiv = vDivSteps.find(v => v >= targetVDiv) ?? vDivSteps[vDivSteps.length - 1];
+  const vDiv = findNearestStep(Math.max(targetVDiv, vDivSteps[0]), vDivSteps);
 
   const m = calcMeasurements(buf, rate);
   const period = m.period || 0.001;
   const targetSDiv = period / 3; // ~3 periods across screen
-  const sDiv = sDivSteps.find(s => s >= targetSDiv) ?? sDivSteps[sDivSteps.length - 1];
+  const sDiv = findNearestStep(Math.max(targetSDiv, sDivSteps[0]), sDivSteps);
 
   const triggerLevel = (Math.max(...buf) + Math.min(...buf)) / 2;
 
-  return { vDiv, sDiv, triggerLevel, source: useCh1 ? "ch1" : "ch2" as "ch1" | "ch2" };
+  return {
+    vDiv,
+    sDiv,
+    triggerLevel,
+    source: useCh1 ? "ch1" : "ch2" as "ch1" | "ch2",
+    ch1HasSignal: hasCh1,
+    ch2HasSignal: hasCh2,
+  };
 }
 
 /* ── FFT helper (radix-2 Cooley-Tukey) ─────────────────────────────── */
@@ -1339,11 +1370,14 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
     void start();
   };
   const handleAutoSet = () => {
-    const result = autoset(ch1Buf.current, ch2Buf.current, sampleRate, [0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10], [1e-6, 2e-6, 5e-6, 1e-5, 2e-5, 5e-5, 1e-4, 2e-4, 5e-4, 1e-3, 2e-3, 5e-3, 1e-2, 2e-2, 5e-2, 1e-1, 2e-1, 5e-1, 1, 2, 5]);
+    const result = autoset(ch1Buf.current, ch2Buf.current, sampleRate, VDIV_STEPS, SDIV_STEPS);
     if (result) {
-      setCh1Vertical(prev => ({ ...prev, vDiv: result.vDiv }));
-      setCh2Vertical(prev => ({ ...prev, vDiv: result.vDiv }));
-      setHorizontal(prev => ({ ...prev, sDiv: result.sDiv }));
+      // eslint-disable-next-line no-console
+      console.log(`[DSO] Autoset: vDiv=${result.vDiv}V/div, sDiv=${formatSDiv(result.sDiv)}, trigger=${result.triggerLevel.toFixed(3)}V, source=${result.source}`);
+      // Only adjust vDiv on channels that have real signal
+      if (result.ch1HasSignal) setCh1Vertical(prev => ({ ...prev, vDiv: result.vDiv }));
+      if (result.ch2HasSignal) setCh2Vertical(prev => ({ ...prev, vDiv: result.vDiv }));
+      setHorizontal(prev => ({ ...prev, sDiv: result.sDiv, rollMode: false }));
       setTrigger(prev => ({ ...prev, level: result.triggerLevel, source: result.source }));
       // Clear phosphor ghosts so they don't mismatch the new timebase
       phosphorTraces.current = [];
