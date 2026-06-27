@@ -247,7 +247,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
   // Trigger state
   const [trigger, setTrigger] = useState<TriggerState>({
     source: "ch1", level: 0, slope: "rise",
-    mode: "auto", coupling: "dc", holdoff: 0,
+    mode: "smart", coupling: "dc", holdoff: 0,
   });
 
   // Math state
