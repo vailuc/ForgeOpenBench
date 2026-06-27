@@ -715,7 +715,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
         overviewPlotRef.current = new uPlot(oOpts, [[], [], [], []], overviewContainer);
       }
     }
-  }, [vpp, ch1Vertical.vDiv, ch2Vertical.vDiv, ch2Vertical.enabled, math.enabled, ch1Vertical.position, ch2Vertical.position, trigger.level, horizontal.position, viewMode]);
+  }, [vpp, ch1Vertical.vDiv, ch2Vertical.vDiv, ch2Vertical.enabled, math.enabled, ch1Vertical.position, ch2Vertical.position, horizontal.position, viewMode]);
 
   useEffect(() => {
     const div = plotDivRef.current;
