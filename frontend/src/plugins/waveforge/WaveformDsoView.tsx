@@ -203,9 +203,9 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
   const singleJustTriggeredRef = useRef(false);
   const triggerArmedRef = useRef(true); // for Normal mode: re-arm after signal leaves trigger zone
   // Smart trigger state machine
-  const smartStateRef = useRef<"auto" | "normal">("auto");
+  const smartStateRef = useRef<"auto" | "locked">("auto");
   const smartTriggerCountRef = useRef(0); // consecutive triggered evaluations in auto sub-state
-  const smartMissCountRef = useRef(0);    // consecutive missed triggers in normal sub-state
+  const smartMissCountRef = useRef(0);    // consecutive missed triggers in locked sub-state
   useEffect(() => {
     const mode = acquireModeRef.current;
     runningRef.current = mode !== "stopped" && mode !== "single-held";
@@ -967,16 +967,16 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
           if (triggered) {
             smartTriggerCountRef.current++;
             if (smartTriggerCountRef.current > 6) { // ~300ms at 50ms throttle
-              smartStateRef.current = "normal";
+              smartStateRef.current = "locked";
               smartMissCountRef.current = 0;
             }
           } else {
             smartTriggerCountRef.current = 0;
           }
         } else {
-          // Normal-like: render whenever trigger is present, at throttle rate
+          // Locked: display frozen, don't re-render
+          // Just monitor if signal is still present
           if (triggered) {
-            renderNow(ch1Buf.current, ch2Buf.current);
             smartMissCountRef.current = 0;
           } else {
             smartMissCountRef.current++;
