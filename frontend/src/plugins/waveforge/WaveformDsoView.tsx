@@ -178,9 +178,6 @@ function saveScopeState(state: Record<string, unknown>) {
   try { sessionStorage.setItem(SCOPE_STATE_KEY, JSON.stringify(state)); } catch {}
 }
 
-const PHOSPHOR_GRID_W = 160;
-const PHOSPHOR_GRID_H = 120;
-
 /* ── Main Component ────────────────────────────────────────────────── */
 export function WaveformDsoView({ transport, isActive, connected }: Props) {
   const plotDivRef = useRef<HTMLDivElement>(null);
@@ -274,8 +271,10 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
   const [phosphorEnabled, setPhosphorEnabled] = useState(persisted?.phosphorEnabled ?? false);
   const phosphorEnabledRef = useRef(phosphorEnabled);
   useEffect(() => { phosphorEnabledRef.current = phosphorEnabled; }, [phosphorEnabled]);
-  const phosphorGrid = useRef<number[][]>([]);
-  const phosphorDecay = useRef(0.9); // decay factor per frame
+  // Trace-echo phosphor: ring buffer of recent aligned traces
+  type TraceSnapshot = { xs: Float64Array; ys1: Float64Array; ys2: Float64Array };
+  const phosphorTraces = useRef<TraceSnapshot[]>([]);
+  const MAX_PHOSPHOR_TRACES = 24;
   const forceTriggerRef = useRef<(() => void) | null>(null);
 
   // Derived view mode
@@ -400,34 +399,43 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       ctx.restore();
     };
 
-    // Digital phosphor draw hook
+    // Digital phosphor draw hook — trace echo: draw fading copies of past traces
     const drawPhosphor = (u: uPlot) => {
-      if (!phosphorEnabledRef.current || phosphorGrid.current.length === 0) return;
+      if (!phosphorEnabledRef.current || phosphorTraces.current.length === 0) return;
       const ctx = u.ctx;
-      const gridW = phosphorGrid.current[0]?.length ?? 0;
-      const gridH = phosphorGrid.current.length;
-      if (gridW === 0 || gridH === 0) return;
-      const plotLeft = u.bbox.left;
-      const plotTop = u.bbox.top;
-      const plotW = u.bbox.width;
-      const plotH = u.bbox.height;
-      const cellW = plotW / gridW;
-      const cellH = plotH / gridH;
-      let maxVal = 0;
-      for (let y = 0; y < gridH; y++) {
-        for (let x = 0; x < gridW; x++) {
-          if (phosphorGrid.current[y][x] > maxVal) maxVal = phosphorGrid.current[y][x];
+      const traces = phosphorTraces.current;
+      const n = traces.length;
+      for (let t = 0; t < n; t++) {
+        const snap = traces[t];
+        const age = n - 1 - t; // 0 = newest (current)
+        const opacity = age === 0 ? 1.0 : Math.max(0, 1 - age / MAX_PHOSPHOR_TRACES) * 0.35;
+        if (opacity <= 0) continue;
+        // CH1 echo
+        ctx.beginPath();
+        ctx.strokeStyle = age === 0 ? "rgba(245,158,11,1)" : `rgba(245,158,11,${opacity})`;
+        ctx.lineWidth = age === 0 ? 1.5 : 1;
+        let first = true;
+        for (let i = 0; i < snap.xs.length; i++) {
+          const x = u.valToPos(snap.xs[i], "x", true);
+          const y = u.valToPos(snap.ys1[i], "y", true);
+          if (x == null || y == null) continue;
+          if (first) { ctx.moveTo(x, y); first = false; }
+          else { ctx.lineTo(x, y); }
         }
-      }
-      if (maxVal < 1) return;
-      for (let y = 0; y < gridH; y++) {
-        for (let x = 0; x < gridW; x++) {
-          const v = phosphorGrid.current[y][x];
-          if (v < 0.5) continue;
-          const intensity = Math.min(1, v / maxVal * 2);
-          ctx.fillStyle = `rgba(150, 255, 120, ${intensity * 0.2})`;
-          ctx.fillRect(plotLeft + x * cellW, plotTop + y * cellH, cellW + 1, cellH + 1);
+        ctx.stroke();
+        // CH2 echo
+        ctx.beginPath();
+        ctx.strokeStyle = age === 0 ? "rgba(96,165,250,1)" : `rgba(96,165,250,${opacity})`;
+        ctx.lineWidth = age === 0 ? 1.5 : 1;
+        first = true;
+        for (let i = 0; i < snap.xs.length; i++) {
+          const x = u.valToPos(snap.xs[i], "x", true);
+          const y = u.valToPos(snap.ys2[i], "y", true);
+          if (x == null || y == null) continue;
+          if (first) { ctx.moveTo(x, y); first = false; }
+          else { ctx.lineTo(x, y); }
         }
+        ctx.stroke();
       }
     };
 
@@ -766,33 +774,16 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
         const ys = new Float64Array(len);
         for (let i = 0; i < len; i++) { xs[i] = a[i]; ys[i] = b[i]; }
         plot.setData([xs, ys, new Float64Array(len), new Float64Array(len)]);
-        // Phosphor accumulation for XY
+        // Phosphor for XY: store as trace snapshots (x=chA, y=chB)
         if (phosphorEnabledRef.current) {
-          const gridW = PHOSPHOR_GRID_W, gridH = PHOSPHOR_GRID_H;
-          if (phosphorGrid.current.length !== gridH || (phosphorGrid.current[0]?.length ?? 0) !== gridW) {
-            phosphorGrid.current = Array.from({ length: gridH }, () => new Array(gridW).fill(0));
-          }
-          // Decay
-          for (let y = 0; y < gridH; y++) {
-            for (let x = 0; x < gridW; x++) {
-              phosphorGrid.current[y][x] *= phosphorDecay.current;
-            }
-          }
-          // Accumulate hits
-          let xmin = Infinity, xmax = -Infinity;
-          let ymin = Infinity, ymax = -Infinity;
-          for (let i = 0; i < len; i++) {
-            const av = a[i], bv = b[i];
-            if (av < xmin) xmin = av;
-            if (av > xmax) xmax = av;
-            if (bv < ymin) ymin = bv;
-            if (bv > ymax) ymax = bv;
-          }
-          const xr = xmax - xmin || 1, yr = ymax - ymin || 1;
-          for (let i = 0; i < len; i++) {
-            const gx = Math.min(gridW - 1, Math.max(0, Math.floor((a[i] - xmin) / xr * gridW)));
-            const gy = Math.min(gridH - 1, Math.max(0, Math.floor((b[i] - ymin) / yr * gridH)));
-            phosphorGrid.current[gy][gx] += 1;
+          const snap: TraceSnapshot = {
+            xs: new Float64Array(a.slice(0, len)),
+            ys1: new Float64Array(b.slice(0, len)),
+            ys2: new Float64Array(len), // unused in XY
+          };
+          phosphorTraces.current.push(snap);
+          if (phosphorTraces.current.length > MAX_PHOSPHOR_TRACES) {
+            phosphorTraces.current.shift();
           }
         }
         return;
@@ -852,32 +843,17 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       }
       const sn = s1.length;
 
-      // Phosphor accumulation for time mode
+      // Phosphor: capture aligned trace snapshot
       if (phosphorEnabledRef.current && sn > 0) {
-        const gridW = PHOSPHOR_GRID_W, gridH = PHOSPHOR_GRID_H;
-        if (phosphorGrid.current.length !== gridH || (phosphorGrid.current[0]?.length ?? 0) !== gridW) {
-          phosphorGrid.current = Array.from({ length: gridH }, () => new Array(gridW).fill(0));
-        }
-        for (let y = 0; y < gridH; y++) {
-          for (let x = 0; x < gridW; x++) {
-            phosphorGrid.current[y][x] *= phosphorDecay.current;
-          }
-        }
-        let vmin = Infinity, vmax = -Infinity;
-        for (let i = 0; i < sn; i++) {
-          const v1 = s1[i], v2 = s2[i];
-          if (v1 < vmin) vmin = v1;
-          if (v1 > vmax) vmax = v1;
-          if (v2 < vmin) vmin = v2;
-          if (v2 > vmax) vmax = v2;
-        }
-        const vr = vmax - vmin || 1;
-        for (let i = 0; i < sn; i++) {
-          const gx = Math.min(gridW - 1, Math.max(0, Math.floor(i / sn * gridW)));
-          const gy1 = Math.min(gridH - 1, Math.max(0, Math.floor((s1[i] - vmin) / vr * gridH)));
-          const gy2 = Math.min(gridH - 1, Math.max(0, Math.floor((s2[i] - vmin) / vr * gridH)));
-          phosphorGrid.current[gridH - 1 - gy1][gx] += 1;
-          phosphorGrid.current[gridH - 1 - gy2][gx] += 0.7;
+        const xs = Float64Array.from({ length: sn }, (_, i) => (startIdx + i) * dt);
+        const snap: TraceSnapshot = {
+          xs,
+          ys1: new Float64Array(s1),
+          ys2: new Float64Array(s2),
+        };
+        phosphorTraces.current.push(snap);
+        if (phosphorTraces.current.length > MAX_PHOSPHOR_TRACES) {
+          phosphorTraces.current.shift();
         }
       }
 
@@ -1028,6 +1004,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
     ch1Buf.current = [];
     ch2Buf.current = [];
     mathBuf.current = [];
+    phosphorTraces.current = [];
     filtRing1.current = [];
     filtRing2.current = [];
     plotThrottleRef.current = 0;
@@ -1063,6 +1040,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
     ch1Buf.current = [];
     ch2Buf.current = [];
     mathBuf.current = [];
+    phosphorTraces.current = [];
     filtRing1.current = [];
     filtRing2.current = [];
     try { await transport.stop(); } catch { }
@@ -1135,6 +1113,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
   };
   const handleClear = () => {
     ch1Buf.current = []; ch2Buf.current = []; mathBuf.current = [];
+    phosphorTraces.current = [];
     plotRef.current?.setData([[], [], [], []]);
     setCh1Meas({ vpp: 0, dc: 0, vrms: 0, freq: 0, period: 0, riseTime: 0, fallTime: 0, dutyCycle: 0, positiveWidth: 0, negativeWidth: 0 });
     setCh2Meas({ vpp: 0, dc: 0, vrms: 0, freq: 0, period: 0, riseTime: 0, fallTime: 0, dutyCycle: 0, positiveWidth: 0, negativeWidth: 0 });
