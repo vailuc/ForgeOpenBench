@@ -125,6 +125,9 @@ export class UsbTransport {
   }
 
   private _lastFrameUs: number = 0;
+  private _chunkCount = 0;
+  private _chunkBytes = 0;
+  private _chunkRateT0 = 0;
 
   private _handleBinary(buf: ArrayBuffer): void {
     // Binary frame format from Rust hantek-capture:
@@ -147,11 +150,17 @@ export class UsbTransport {
       // eslint-disable-next-line no-console
       console.log(`[UsbTransport] frame interval: ${(intervalUs / 1000).toFixed(1)}ms`);
     }
-    const timestampUs = Number(view.getBigUint64(12, true));
-    const transportLatencyMs = (nowUs - timestampUs) / 1000;
-    if (Math.abs(transportLatencyMs) > 50) {
+    // Chunk-rate diagnostics
+    const nowMs = performance.now();
+    if (this._chunkRateT0 === 0) this._chunkRateT0 = nowMs;
+    this._chunkCount++;
+    this._chunkBytes += nBytes;
+    if (nowMs - this._chunkRateT0 >= 1000) {
       // eslint-disable-next-line no-console
-      console.log(`[UsbTransport] transport latency: ${transportLatencyMs.toFixed(1)}ms (backend ts ${timestampUs}, browser ${nowUs})`);
+      console.log(`[UsbTransport] chunk rate: ${this._chunkCount}/s, ${this._chunkBytes} bytes/s, avg ${(this._chunkBytes / this._chunkCount).toFixed(0)} bytes/chunk`);
+      this._chunkCount = 0;
+      this._chunkBytes = 0;
+      this._chunkRateT0 = nowMs;
     }
 
     const chunk: UsbDataChunk = {
