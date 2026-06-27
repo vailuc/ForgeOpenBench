@@ -198,6 +198,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
   const pausedRef = useRef(false);
   const singleArmedRef = useRef(false);
   const singleJustTriggeredRef = useRef(false);
+  const triggerArmedRef = useRef(true); // for Normal mode: re-arm after signal leaves trigger zone
   useEffect(() => {
     const mode = acquireModeRef.current;
     runningRef.current = mode !== "stopped" && mode !== "single-held";
@@ -479,14 +480,32 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
     const gain = vpp / 256;
 
     for (let i = 0; i + 1 < bytes.length; i += 2) {
-      let v1 = (bytes[i]   - 128) * gain;
-      let v2 = (bytes[i+1] - 128) * gain;
+      let v1 = (bytes[i]   - 128) * gain * ch1VerticalRef.current.probe;
+      let v2 = (bytes[i+1] - 128) * gain * ch2VerticalRef.current.probe;
 
       if (ch1VerticalRef.current.invert) v1 = -v1;
       if (ch2VerticalRef.current.invert) v2 = -v2;
 
+      // BW limit: simple exponential moving average (digital LPF)
+      if (ch1VerticalRef.current.bwLimit) {
+        const alpha = 0.3; // ~20MHz equivalent at 4MS/s
+        v1 = filtRing1.current.length > 0 ? alpha * v1 + (1 - alpha) * filtRing1.current[filtRing1.current.length - 1] : v1;
+      }
+      if (ch2VerticalRef.current.bwLimit) {
+        const alpha = 0.3;
+        v2 = filtRing2.current.length > 0 ? alpha * v2 + (1 - alpha) * filtRing2.current[filtRing2.current.length - 1] : v2;
+      }
+
       ch1Buf.current.push(v1);
       ch2Buf.current.push(v2);
+      filtRing1.current.push(v1);
+      filtRing2.current.push(v2);
+    }
+
+    // Trim filter rings alongside buffers
+    if (filtRing1.current.length > ch1Buf.current.length) {
+      filtRing1.current = filtRing1.current.slice(-ch1Buf.current.length);
+      filtRing2.current = filtRing2.current.slice(-ch2Buf.current.length);
     }
 
     // Window trim
@@ -584,13 +603,31 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
         return;
       }
 
-      // time mode
+      // time mode (with optional peak detect decimation)
+      const isPeak = horizontalRef.current.acquireMode === "peak";
+      let r1 = ch1, r2 = ch2;
+      if (isPeak && n > target) {
+        const step = Math.floor(n / target);
+        r1 = []; r2 = [];
+        for (let i = 0; i < n; i += step) {
+          const end = Math.min(i + step, n);
+          let min1 = ch1[i], max1 = ch1[i];
+          let min2 = ch2[i], max2 = ch2[i];
+          for (let j = i + 1; j < end; j++) {
+            if (ch1[j] < min1) min1 = ch1[j]; if (ch1[j] > max1) max1 = ch1[j];
+            if (ch2[j] < min2) min2 = ch2[j]; if (ch2[j] > max2) max2 = ch2[j];
+          }
+          r1.push(min1, max1); r2.push(min2, max2);
+        }
+      }
+      const rn = r1.length;
+
       const doMath = mathRef.current.enabled && mathRef.current.op !== "fft" && mathRef.current.op !== "xy";
       if (doMath) {
-        const a = mathRef.current.sourceA === "ch2" ? ch2 : ch1;
-        const b = mathRef.current.sourceB === "ch2" ? ch2 : ch1;
-        mathBuf.current = new Array(n).fill(0);
-        for (let i = 0; i < n; i++) {
+        const a = mathRef.current.sourceA === "ch2" ? r2 : r1;
+        const b = mathRef.current.sourceB === "ch2" ? r2 : r1;
+        mathBuf.current = new Array(rn).fill(0);
+        for (let i = 0; i < rn; i++) {
           const av = a[i] ?? 0, bv = b[i] ?? 0;
           const op = mathRef.current.op;
           if (op === "add") mathBuf.current[i] = av + bv;
@@ -599,15 +636,15 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
           else if (op === "div") mathBuf.current[i] = bv !== 0 ? av / bv : 0;
         }
       }
-      const mathArr = doMath ? mathBuf.current : new Array(n).fill(0);
-      if (n <= target) {
-        const xs = Float64Array.from({ length: n }, (_, i) => i * dt);
-        plot.setData([xs, new Float64Array(ch1), new Float64Array(ch2), new Float64Array(mathArr)]);
+      const mathArr = doMath ? mathBuf.current : new Array(rn).fill(0);
+      if (rn <= target || isPeak) {
+        const xs = Float64Array.from({ length: rn }, (_, i) => i * dt);
+        plot.setData([xs, new Float64Array(r1), new Float64Array(r2), new Float64Array(mathArr)]);
       } else {
-        const step = Math.floor(n / target);
-        const m = Math.ceil(n / step);
+        const step = Math.floor(rn / target);
+        const m = Math.ceil(rn / step);
         const xs = new Float64Array(m), ys1 = new Float64Array(m), ys2 = new Float64Array(m), ysM = new Float64Array(m);
-        for (let i = 0, j = 0; i < n; i += step, j++) { xs[j] = i * dt; ys1[j] = ch1[i]; ys2[j] = ch2[i]; ysM[j] = mathArr[i]; }
+        for (let i = 0, j = 0; i < rn; i += step, j++) { xs[j] = i * dt; ys1[j] = r1[i]; ys2[j] = r2[i]; ysM[j] = mathArr[i]; }
         plot.setData([xs, ys1, ys2, ysM]);
       }
     };
@@ -659,8 +696,26 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
 
     // mode === "running"
     if (nowPerf - plotThrottleRef.current > 50) {
-      if (triggerRef.current.mode === "auto" || detectTrigger(sourceBuf)) {
+      const tmode = triggerRef.current.mode;
+      if (tmode === "auto") {
         renderNow(ch1Buf.current, ch2Buf.current);
+        triggerArmedRef.current = true;
+      } else if (tmode === "normal") {
+        const triggered = detectTrigger(sourceBuf);
+        if (triggered && triggerArmedRef.current) {
+          renderNow(ch1Buf.current, ch2Buf.current);
+          triggerArmedRef.current = false;
+        }
+        // Re-arm when signal leaves trigger zone
+        if (!triggerArmedRef.current && sourceBuf.length > 0) {
+          const last = sourceBuf[sourceBuf.length - 1];
+          const level = triggerRef.current.level;
+          const slope = triggerRef.current.slope;
+          const margin = vpp * 0.05;
+          if (slope === "rise" && last < level - margin) triggerArmedRef.current = true;
+          if (slope === "fall" && last > level + margin) triggerArmedRef.current = true;
+          if (slope === "both" && (last < level - margin || last > level + margin)) triggerArmedRef.current = true;
+        }
       }
     }
   }, [vpp, windowMs]);
@@ -674,6 +729,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
     filtRing1.current = [];
     filtRing2.current = [];
     plotThrottleRef.current = 0;
+    triggerArmedRef.current = true;
     try {
       await transport.configure({
         mode: "dso",
