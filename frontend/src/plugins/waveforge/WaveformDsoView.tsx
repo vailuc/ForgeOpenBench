@@ -342,8 +342,10 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       const plotH = u.bbox.height;
       const plotLeft = u.bbox.left;
       const plotRight = plotLeft + u.bbox.width;
-      const vmin = -vpp / 2 + posOff;
-      const vmax = vpp / 2 + posOff;
+      // Match the y-axis range used in the plot config
+      const yRange = ch1Vertical.vDiv * 10;
+      const vmin = -yRange / 2 + posOff;
+      const vmax = yRange / 2 + posOff;
       const yScale = plotH / (vmax - vmin);
       const yOfs = plotTop + plotH;
       const y = yOfs - (level - vmin) * yScale;
@@ -434,8 +436,10 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
     } else {
       // Position offsets: use trigger source channel position for grid center
       const posOffset = (triggerRef.current.source === "ch2" ? ch2Vertical.position : ch1Vertical.position) / 1000;
-      const yMin = -vpp / 2 + posOffset;
-      const yMax = vpp / 2 + posOffset;
+      // y-axis range is based on V/div setting, not hardware vpp bucket
+      const yRange = ch1Vertical.vDiv * 10; // 10 divisions total
+      const yMin = -yRange / 2 + posOffset;
+      const yMax = yRange / 2 + posOffset;
       opts = {
         width: W, height: H,
         padding: [0, 0, 0, 0],
@@ -461,7 +465,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       };
     }
     plotRef.current = new uPlot(opts, [[], [], [], []], container);
-  }, [vpp, ch2Vertical.enabled, math.enabled, ch1Vertical.position, ch2Vertical.position, trigger.level, horizontal.position, viewMode, phosphorEnabled]);
+  }, [vpp, ch1Vertical.vDiv, ch2Vertical.vDiv, ch2Vertical.enabled, math.enabled, ch1Vertical.position, ch2Vertical.position, trigger.level, horizontal.position, viewMode, phosphorEnabled]);
 
   useEffect(() => {
     const div = plotDivRef.current;
