@@ -272,7 +272,14 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
   const phosphorEnabledRef = useRef(phosphorEnabled);
   useEffect(() => { phosphorEnabledRef.current = phosphorEnabled; }, [phosphorEnabled]);
   // Trace-echo phosphor: ring buffer of recent aligned traces
-  type TraceSnapshot = { mode: "time" | "xy"; xs?: Float64Array; ys1: Float64Array; ys2: Float64Array };
+  type TraceSnapshot = {
+    mode: "time" | "xy";
+    xs?: Float64Array;
+    ys1: Float64Array;
+    ys2: Float64Array;
+    triggerOffset?: number; // index of trigger within ys arrays (time mode)
+    dt?: number;            // seconds per sample (time mode)
+  };
   const phosphorTraces = useRef<TraceSnapshot[]>([]);
   const MAX_PHOSPHOR_TRACES = 8; // ~0.4s at 50ms throttle
   const forceTriggerRef = useRef<(() => void) | null>(null);
@@ -409,26 +416,35 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       const ctx = u.ctx;
       const traces = phosphorTraces.current;
       const n = traces.length;
-      const currentX = u.data[0] as (Float64Array | number[] | undefined);
-      if (!currentX || currentX.length === 0) return;
       // Skip the newest trace — uPlot already drew it at full opacity.
       for (let t = 0; t < n - 1; t++) {
         const snap = traces[t];
         const age = n - 1 - t; // 1 = oldest in buffer
         const opacity = Math.max(0, 1 - age / MAX_PHOSPHOR_TRACES) * 0.35;
         if (opacity <= 0) continue;
-        // Time mode: use current plot's x-data as template so all ghosts align horizontally
-        // XY mode: each snapshot carries its own x-values (CH1 voltage)
-        const xSrc = snap.mode === "time" ? currentX : snap.xs;
-        if (!xSrc) continue;
-        const len = Math.min(xSrc.length, snap.ys1.length, snap.ys2.length);
+        const len = snap.ys1.length;
+        // Time mode: align all traces by their trigger point.
+        // Compute x relative to the current plot's trigger screen position.
+        let xFor: (i: number) => number | null;
+        if (snap.mode === "time") {
+          const xMin = u.scales.x.min ?? 0;
+          const xMax = u.scales.x.max ?? 0;
+          const triggerX = xMin + (xMax - xMin) * 0.25; // trigger at 25% from left
+          const toff = snap.triggerOffset ?? 0;
+          const sdt = snap.dt ?? 1e-6;
+          xFor = (i: number) => u.valToPos(triggerX + (i - toff) * sdt, "x", true);
+        } else {
+          // XY mode: each snapshot carries its own x-values (CH1 voltage)
+          if (!snap.xs) continue;
+          xFor = (i: number) => u.valToPos(snap.xs[i], "x", true);
+        }
         // CH1 echo — darker amber shadow
         ctx.beginPath();
         ctx.strokeStyle = `rgba(160,90,20,${opacity})`;
         ctx.lineWidth = 1;
         let first = true;
         for (let i = 0; i < len; i++) {
-          const x = u.valToPos(xSrc[i], "x", true);
+          const x = xFor(i);
           const y = u.valToPos(snap.ys1[i], "y", true);
           if (x == null || y == null) continue;
           if (first) { ctx.moveTo(x, y); first = false; }
@@ -441,7 +457,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
         ctx.lineWidth = 1;
         first = true;
         for (let i = 0; i < len; i++) {
-          const x = u.valToPos(xSrc[i], "x", true);
+          const x = xFor(i);
           const y = u.valToPos(snap.ys2[i], "y", true);
           if (x == null || y == null) continue;
           if (first) { ctx.moveTo(x, y); first = false; }
@@ -856,12 +872,15 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       }
       const sn = s1.length;
 
-      // Phosphor: capture aligned trace snapshot (y-only; x-template comes from current plot)
+      // Phosphor: capture aligned trace snapshot (trigger-aligned)
       if (phosphorEnabledRef.current && sn > 0) {
+        const tIdx = findTriggerIndex(s1); // re-detect trigger within the aligned slice
         const snap: TraceSnapshot = {
           mode: "time",
           ys1: new Float64Array(s1),
           ys2: new Float64Array(s2),
+          triggerOffset: tIdx >= 0 ? tIdx : Math.floor(sn * 0.25),
+          dt,
         };
         phosphorTraces.current.push(snap);
         if (phosphorTraces.current.length > MAX_PHOSPHOR_TRACES) {
@@ -875,18 +894,22 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       }
 
       // Render aligned or full
-      const doDecimate = sn > target && !isPeak;
+      // When phosphor is on, skip decimation so all traces have matching point counts
+      // and ghosts align perfectly with the frozen trace.
+      const doDecimate = !phosphorEnabledRef.current && sn > target && !isPeak;
       const step = doDecimate ? Math.floor(sn / target) : 1;
       const m = doDecimate ? Math.ceil(sn / step) : sn;
+      let xs: Float64Array, ys1Arr: Float64Array, ys2Arr: Float64Array, ysMArr: Float64Array;
       if (!doDecimate) {
-        const xs = Float64Array.from({ length: sn }, (_, i) => (startIdx + i) * dt);
-        plot.setData([xs, new Float64Array(s1), new Float64Array(s2), new Float64Array(sM)]);
+        xs = Float64Array.from({ length: sn }, (_, i) => (startIdx + i) * dt);
+        ys1Arr = new Float64Array(s1); ys2Arr = new Float64Array(s2); ysMArr = new Float64Array(sM);
+        plot.setData([xs, ys1Arr, ys2Arr, ysMArr]);
       } else {
-        const xs = new Float64Array(m), ys1 = new Float64Array(m), ys2 = new Float64Array(m), ysM = new Float64Array(m);
+        xs = new Float64Array(m); ys1Arr = new Float64Array(m); ys2Arr = new Float64Array(m); ysMArr = new Float64Array(m);
         for (let i = 0, j = 0; i < sn; i += step, j++) {
-          xs[j] = (startIdx + i) * dt; ys1[j] = s1[i]; ys2[j] = s2[i]; ysM[j] = sM[i];
+          xs[j] = (startIdx + i) * dt; ys1Arr[j] = s1[i]; ys2Arr[j] = s2[i]; ysMArr[j] = sM[i];
         }
-        plot.setData([xs, ys1, ys2, ysM]);
+        plot.setData([xs, ys1Arr, ys2Arr, ysMArr]);
       }
       // Overview gets full data (no decimation)
       const ov = overviewPlotRef.current;
