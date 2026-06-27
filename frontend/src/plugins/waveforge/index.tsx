@@ -12,9 +12,16 @@ import { useSettingsStore } from "../../core/settings_store";
 type Tab = "la" | "dso";
 type ConnectionState = "disconnected" | "connecting" | "connected";
 const EMPTY_CFG: Record<string, unknown> = {};
+const TAB_KEY = "waveforge:lastTab";
+const SESSION_KEY = "waveforge:sessionActive";
 
 function WaveForgeApp({ bus: _bus }: { bus: PluginBus }) {
-  const [activeTab, setActiveTab] = useState<Tab>("la");
+  const savedTab = (typeof sessionStorage !== "undefined" ? sessionStorage.getItem(TAB_KEY) : null) as Tab | null;
+  const [activeTab, setActiveTab] = useState<Tab>(savedTab ?? "la");
+  // Track whether this session was restored (F5) vs fresh (new tab / hard refresh)
+  const wasPreviouslyActive = typeof sessionStorage !== "undefined" && sessionStorage.getItem(SESSION_KEY) === "1";
+  if (typeof sessionStorage !== "undefined") sessionStorage.setItem(SESSION_KEY, "1");
+  const scopeNeedsResetRef = useRef(wasPreviouslyActive);
   const [connState, setConnState] = useState<ConnectionState>("disconnected");
   const [serverOnline, setServerOnline] = useState(false);
   const [devices, setDevices] = useState<UsbDeviceInfo[]>([]);
@@ -113,6 +120,20 @@ function WaveForgeApp({ bus: _bus }: { bus: PluginBus }) {
   }, []);
 
   const connected = connState === "connected";
+
+  // Force disconnect on first scope visit after a refresh if still connected.
+  // The USB stream state from before the refresh is stale; a reconnect gives a clean start.
+  useEffect(() => {
+    if (activeTab === "dso" && connected && scopeNeedsResetRef.current) {
+      scopeNeedsResetRef.current = false;
+      void disconnect();
+    }
+  }, [activeTab, connected, disconnect]);
+
+  // Persist active tab so F5 returns to the same view
+  useEffect(() => {
+    if (typeof sessionStorage !== "undefined") sessionStorage.setItem(TAB_KEY, activeTab);
+  }, [activeTab]);
 
   return (
     <div className="flex flex-col h-full bg-fob-surface text-fob-text font-mono text-xs select-none">
