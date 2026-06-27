@@ -964,7 +964,6 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
         const triggered = detectTrigger(sourceBuf);
         if (smartStateRef.current === "auto") {
           renderNow(ch1Buf.current, ch2Buf.current);
-          triggerArmedRef.current = true;
           if (triggered) {
             smartTriggerCountRef.current++;
             if (smartTriggerCountRef.current > 6) { // ~300ms at 50ms throttle
@@ -975,24 +974,11 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
             smartTriggerCountRef.current = 0;
           }
         } else {
-          // Normal-like
-          if (triggered && triggerArmedRef.current) {
+          // Normal-like: render whenever trigger is present, at throttle rate
+          if (triggered) {
             renderNow(ch1Buf.current, ch2Buf.current);
             smartMissCountRef.current = 0;
-            triggerArmedRef.current = false;
-          }
-          // Re-arm when signal leaves trigger zone
-          if (!triggerArmedRef.current && sourceBuf.length > 0) {
-            const last = sourceBuf[sourceBuf.length - 1];
-            const level = triggerRef.current.level;
-            const slope = triggerRef.current.slope;
-            const margin = vpp * 0.05;
-            if (slope === "rise" && last < level - margin) triggerArmedRef.current = true;
-            if (slope === "fall" && last > level + margin) triggerArmedRef.current = true;
-            if (slope === "both" && (last < level - margin || last > level + margin)) triggerArmedRef.current = true;
-          }
-          // Count missed triggers
-          if (!triggered || !triggerArmedRef.current) {
+          } else {
             smartMissCountRef.current++;
           }
           // Revert to auto after ~500ms without trigger (10 evaluations at 50ms)
@@ -1000,7 +986,6 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
             smartStateRef.current = "auto";
             smartTriggerCountRef.current = 0;
             smartMissCountRef.current = 0;
-            triggerArmedRef.current = true;
           }
         }
       }
