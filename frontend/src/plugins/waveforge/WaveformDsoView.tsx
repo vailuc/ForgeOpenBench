@@ -273,6 +273,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
   useEffect(() => { phosphorEnabledRef.current = phosphorEnabled; }, [phosphorEnabled]);
   const phosphorGrid = useRef<number[][]>([]);
   const phosphorDecay = useRef(0.9); // decay factor per frame
+  const forceTriggerRef = useRef<(() => void) | null>(null);
 
   // Derived view mode
   const viewMode = math.enabled && math.op === "fft" ? "fft" : math.enabled && math.op === "xy" ? "xy" : "time";
@@ -398,7 +399,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
 
     // Digital phosphor draw hook
     const drawPhosphor = (u: uPlot) => {
-      if (!phosphorEnabled || phosphorGrid.current.length === 0) return;
+      if (!phosphorEnabledRef.current || phosphorGrid.current.length === 0) return;
       const ctx = u.ctx;
       const gridW = phosphorGrid.current[0]?.length ?? 0;
       const gridH = phosphorGrid.current.length;
@@ -540,7 +541,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
         overviewPlotRef.current = new uPlot(oOpts, [[], [], [], []], overviewContainer);
       }
     }
-  }, [vpp, ch1Vertical.vDiv, ch2Vertical.vDiv, ch2Vertical.enabled, math.enabled, ch1Vertical.position, ch2Vertical.position, trigger.level, horizontal.position, viewMode, phosphorEnabled]);
+  }, [vpp, ch1Vertical.vDiv, ch2Vertical.vDiv, ch2Vertical.enabled, math.enabled, ch1Vertical.position, ch2Vertical.position, trigger.level, horizontal.position, viewMode]);
 
   useEffect(() => {
     const div = plotDivRef.current;
@@ -732,6 +733,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
 
     // Render helper — mode-aware: time / fft / xy
     const renderNow = (ch1: number[], ch2: number[]) => {
+      forceTriggerRef.current = () => renderNow(ch1Buf.current, ch2Buf.current);
       plotThrottleRef.current = nowPerf;
       const plot = plotRef.current;
       if (!plot) return;
@@ -1114,8 +1116,8 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
     }
   };
   const handleForceTrigger = () => {
-    // In software trigger mode, just re-render current buffer aligned to trigger
-    // TODO: Phase 2
+    // One-shot: render current buffers immediately regardless of trigger state
+    forceTriggerRef.current?.();
   };
   const handleSetTrigger50Percent = () => {
     const buf = ch1Buf.current.length > 10 ? ch1Buf.current : ch2Buf.current;
