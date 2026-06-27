@@ -147,6 +147,12 @@ export class UsbTransport {
       // eslint-disable-next-line no-console
       console.log(`[UsbTransport] frame interval: ${(intervalUs / 1000).toFixed(1)}ms`);
     }
+    const timestampUs = Number(view.getBigUint64(12, true));
+    const transportLatencyMs = (nowUs - timestampUs) / 1000;
+    if (Math.abs(transportLatencyMs) > 50) {
+      // eslint-disable-next-line no-console
+      console.log(`[UsbTransport] transport latency: ${transportLatencyMs.toFixed(1)}ms (backend ts ${timestampUs}, browser ${nowUs})`);
+    }
 
     const chunk: UsbDataChunk = {
       mode: "dso",

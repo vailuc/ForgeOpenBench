@@ -344,7 +344,13 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
   useEffect(() => {
     if (resetting) return;
     if (connected && isActive && !runningRef.current && !pausedRef.current) {
-      void start();
+      // Small debounce to avoid Strict Mode double-mount race
+      const t = setTimeout(() => {
+        if (connected && isActive && !runningRef.current && !pausedRef.current) {
+          void start();
+        }
+      }, 100);
+      return () => clearTimeout(t);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected, isActive, resetting]);
@@ -705,9 +711,11 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
   }, [buildPlot]);
 
   // Data push handler
+  const chunkTimes = useRef<number[]>([]);
   const pushData = useCallback((chunk: UsbDataChunk) => {
     const bytes = chunk.data ?? Uint8Array.from(atob(chunk.b64), c => c.charCodeAt(0));
     const gain = vpp / 256;
+    const chunkT0 = performance.now();
 
     for (let i = 0; i + 1 < bytes.length; i += 2) {
       let v1 = (bytes[i]   - 128) * gain * ch1VerticalRef.current.probe;
@@ -761,6 +769,8 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
     const mode = acquireModeRef.current;
     const nowPerf = performance.now();
     if (mode === "stopped" || mode === "single-held") return;
+    chunkTimes.current.push(chunkT0);
+    if (chunkTimes.current.length > 20) chunkTimes.current.shift();
 
     // Trigger detection helper — returns crossing index or -1
     const findTriggerIndex = (buf: number[]): number => {
@@ -787,6 +797,9 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       const plot = plotRef.current;
       if (!plot) return;
       const renderT0 = performance.now();
+      // Log end-to-end latency: time from most recent chunk arrival to render start
+      const lastChunkT = chunkTimes.current.length > 0 ? chunkTimes.current[chunkTimes.current.length - 1] : renderT0;
+      const e2eLatency = renderT0 - lastChunkT;
       const n = ch1.length;
       const width = plot.width ?? 1000;
       const target = Math.max(1000, width * 2);
@@ -949,6 +962,10 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
         // eslint-disable-next-line no-console
         console.log(`[DSO] renderNow slow: ${renderElapsed.toFixed(1)}ms (sn=${sn}, doDecimate=${doDecimate})`);
       }
+      if (e2eLatency > 200) {
+        // eslint-disable-next-line no-console
+        console.log(`[DSO] e2e latency: ${e2eLatency.toFixed(1)}ms (render=${renderElapsed.toFixed(1)}ms)`);
+      }
     };
 
     const sourceBuf = triggerRef.current.source === "ch2" ? ch2Buf.current : ch1Buf.current;
@@ -992,6 +1009,9 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       // Bypass trigger, render latest window continuously
       if (nowPerf - plotThrottleRef.current > 50) {
         renderNow(ch1Buf.current, ch2Buf.current);
+      } else if (nowPerf - plotThrottleRef.current > 500) {
+        // eslint-disable-next-line no-console
+        console.log(`[DSO] rolling render skipped: throttle=${(nowPerf - plotThrottleRef.current).toFixed(0)}ms`);
       }
       return;
     }
@@ -1055,6 +1075,11 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
   // Start / stop
   const start = useCallback(async () => {
     if (!connected || runningRef.current) return;
+    // Guard against Strict Mode double-mount and parent reset races
+    if (!transport.deviceInfo) {
+      console.warn("[DSO] start skipped: no device connected");
+      return;
+    }
     // If we already have an active data handler, the backend is streaming.
     // Just resume state without re-configuring (avoids disruption on spurious usb_stopped).
     if (dataOffRef.current) {
