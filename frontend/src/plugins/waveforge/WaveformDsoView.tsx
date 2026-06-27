@@ -697,7 +697,9 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       if (buf.length < 100) return -1;
       const level = triggerRef.current.level;
       const slope = triggerRef.current.slope;
-      const checkStart = Math.max(0, buf.length - 4000);
+      const sr = sampleRateRef.current || 4_000_000;
+      const windowSamples = Math.max(500, Math.ceil(sr * 0.001)); // ~1ms worth of samples
+      const checkStart = Math.max(0, buf.length - windowSamples);
       for (let i = checkStart + 1; i < buf.length; i++) {
         const prev = buf[i - 1], curr = buf[i];
         if (slope === "rise" && prev <= level && curr > level) return i;
