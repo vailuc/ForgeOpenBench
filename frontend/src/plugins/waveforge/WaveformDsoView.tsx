@@ -121,9 +121,12 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
   const dataOffRef = useRef<(() => void) | null>(null);
   const ch1Buf = useRef<number[]>([]);
   const ch2Buf = useRef<number[]>([]);
+  const mathBuf = useRef<number[]>([]);
   const filtRing1 = useRef<number[]>([]);
   const filtRing2 = useRef<number[]>([]);
   const intentionalStopRef = useRef(false);
+  const singleArmedRef = useRef(false);
+  const singleJustTriggeredRef = useRef(false);
   const startRef = useRef<() => Promise<void>>(async () => {});
   const connectedRef = useRef(connected);
   useEffect(() => { connectedRef.current = connected; }, [connected]);
@@ -196,6 +199,8 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
   useEffect(() => { horizontalRef.current = horizontal; }, [horizontal]);
   useEffect(() => { triggerRef.current = trigger; }, [trigger]);
   useEffect(() => { sampleRateRef.current = sampleRate; }, [sampleRate]);
+  const mathRef = useRef(math);
+  useEffect(() => { mathRef.current = math; }, [math]);
 
   // Auto-start when connected
   useEffect(() => {
@@ -268,12 +273,13 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
         {},
         { stroke: "#F59E0B", width: 1.5, label: "CH1" },
         { stroke: "#60A5FA", width: 1.5, label: "CH2", show: ch2Vertical.enabled },
+        { stroke: "#4ADE80", width: 1.5, label: "MATH", show: math.enabled },
       ],
       cursor: { show: true },
       hooks: { drawClear: [drawTriggerLine] },
     };
-    plotRef.current = new uPlot(opts, [[], [], []], container);
-  }, [vpp, ch2Vertical.enabled]);
+    plotRef.current = new uPlot(opts, [[], [], [], []], container);
+  }, [vpp, ch2Vertical.enabled, math.enabled]);
 
   useEffect(() => {
     const div = plotDivRef.current;
@@ -321,6 +327,34 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       setCh2Meas(m2);
     }
 
+    // Single-shot trigger check
+    if (singleArmedRef.current) {
+      const buf = triggerRef.current.source === "ch2" ? ch2Buf.current : ch1Buf.current;
+      if (buf.length > 100) {
+        const level = triggerRef.current.level;
+        const slope = triggerRef.current.slope;
+        let triggered = false;
+        // Check last 500 samples for trigger crossing
+        const checkStart = Math.max(0, buf.length - 500);
+        for (let i = checkStart + 1; i < buf.length; i++) {
+          const prev = buf[i - 1];
+          const curr = buf[i];
+          if (slope === "rise" && prev <= level && curr > level) { triggered = true; break; }
+          if (slope === "fall" && prev >= level && curr < level) { triggered = true; break; }
+          if (slope === "both" && ((prev <= level && curr > level) || (prev >= level && curr < level))) {
+            triggered = true; break;
+          }
+        }
+        if (triggered) {
+          singleArmedRef.current = false;
+          singleJustTriggeredRef.current = true;
+          // Force one render then stop
+          plotThrottleRef.current = 0; // force redraw
+          // Fall through to render below, then stop after
+        }
+      }
+    }
+
     // Plot (throttled ~20fps)
     const nowPerf = performance.now();
     if (!pausedRef.current && nowPerf - plotThrottleRef.current > 50) {
@@ -328,9 +362,29 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       const n = ch1Buf.current.length;
       const width = plotRef.current?.width ?? 1000;
       const target = Math.max(1000, width * 2);
+      // Compute math trace if enabled
+      const doMath = mathRef.current.enabled && mathRef.current.op !== "fft" && mathRef.current.op !== "xy";
+      if (doMath) {
+        const a = mathRef.current.sourceA === "ch2" ? ch2Buf.current : ch1Buf.current;
+        const b = mathRef.current.sourceB === "ch2" ? ch2Buf.current : ch1Buf.current;
+        mathBuf.current = new Array(n).fill(0);
+        const op = mathRef.current.op;
+        for (let i = 0; i < n; i++) {
+          const av = a[i] ?? 0, bv = b[i] ?? 0;
+          if (op === "add") mathBuf.current[i] = av + bv;
+          else if (op === "sub") mathBuf.current[i] = av - bv;
+          else if (op === "mul") mathBuf.current[i] = av * bv;
+          else if (op === "div") mathBuf.current[i] = bv !== 0 ? av / bv : 0;
+        }
+      }
+
       if (n <= target) {
         const xs = Float64Array.from({ length: n }, (_, i) => i * dt);
-        plotRef.current?.setData([xs, new Float64Array(ch1Buf.current), new Float64Array(ch2Buf.current)]);
+        if (doMath) {
+          plotRef.current?.setData([xs, new Float64Array(ch1Buf.current), new Float64Array(ch2Buf.current), new Float64Array(mathBuf.current)]);
+        } else {
+          plotRef.current?.setData([xs, new Float64Array(ch1Buf.current), new Float64Array(ch2Buf.current)]);
+        }
       } else {
         const step = Math.floor(n / target);
         const m = Math.ceil(n / step);
@@ -342,7 +396,18 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
           ys1[j] = ch1Buf.current[i];
           ys2[j] = ch2Buf.current[i];
         }
-        plotRef.current?.setData([xs, ys1, ys2]);
+        if (doMath) {
+          const ysM = new Float64Array(m);
+          for (let i = 0, j = 0; i < n; i += step, j++) ysM[j] = mathBuf.current[i];
+          plotRef.current?.setData([xs, ys1, ys2, ysM]);
+        } else {
+          plotRef.current?.setData([xs, ys1, ys2]);
+        }
+      }
+      // If this render was forced by single-shot trigger, stop after drawing
+      if (singleJustTriggeredRef.current) {
+        singleJustTriggeredRef.current = false;
+        void stop(true);
       }
     }
   }, [vpp, windowMs]);
@@ -352,6 +417,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
     if (!connected || runningRef.current) return;
     ch1Buf.current = [];
     ch2Buf.current = [];
+    mathBuf.current = [];
     filtRing1.current = [];
     filtRing2.current = [];
     plotThrottleRef.current = 0;
@@ -382,6 +448,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
     dataOffRef.current = null;
     ch1Buf.current = [];
     ch2Buf.current = [];
+    mathBuf.current = [];
     filtRing1.current = [];
     filtRing2.current = [];
     try { await transport.stop(); } catch { }
@@ -396,7 +463,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       if (!runningRef.current) return;
       runningRef.current = false;
       setRunning(false);
-      ch1Buf.current = []; ch2Buf.current = [];
+      ch1Buf.current = []; ch2Buf.current = []; mathBuf.current = [];
       filtRing1.current = []; filtRing2.current = [];
       if (intentionalStopRef.current) {
         intentionalStopRef.current = false;
@@ -430,7 +497,8 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
   const handleRun = () => { pausedRef.current = false; setPaused(false); void start(); };
   const handleStop = () => void stop(true);
   const handleSingle = () => {
-    // TODO: Phase 2 — single trigger mode
+    singleArmedRef.current = true;
+    singleJustTriggeredRef.current = false;
     void start();
   };
   const handleAutoSet = () => {
@@ -453,8 +521,12 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
     setTrigger(prev => ({ ...prev, level: mid }));
   };
   const handleClear = () => {
-    ch1Buf.current = []; ch2Buf.current = [];
-    plotRef.current?.setData([[], [], []]);
+    ch1Buf.current = []; ch2Buf.current = []; mathBuf.current = [];
+    if (math.enabled) {
+      plotRef.current?.setData([[], [], [], []]);
+    } else {
+      plotRef.current?.setData([[], [], []]);
+    }
     setCh1Meas({ vpp: 0, dc: 0, vrms: 0, freq: 0, period: 0, riseTime: 0, fallTime: 0, dutyCycle: 0, positiveWidth: 0, negativeWidth: 0 });
     setCh2Meas({ vpp: 0, dc: 0, vrms: 0, freq: 0, period: 0, riseTime: 0, fallTime: 0, dutyCycle: 0, positiveWidth: 0, negativeWidth: 0 });
   };
