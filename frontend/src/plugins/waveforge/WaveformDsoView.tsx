@@ -165,6 +165,19 @@ function fftMagnitude(buf: number[], sampleRate: number): { freqs: number[]; mag
   return { freqs, mags };
 }
 
+// Session-persisted state — survives F5, resets on new tab / hard refresh
+const SCOPE_STATE_KEY = "waveforge:scopeState";
+function loadScopeState() {
+  try {
+    const raw = sessionStorage.getItem(SCOPE_STATE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch { return null; }
+}
+function saveScopeState(state: Record<string, unknown>) {
+  try { sessionStorage.setItem(SCOPE_STATE_KEY, JSON.stringify(state)); } catch {}
+}
+
 /* ── Main Component ────────────────────────────────────────────────── */
 export function WaveformDsoView({ transport, isActive, connected }: Props) {
   const plotDivRef = useRef<HTMLDivElement>(null);
@@ -214,21 +227,21 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
     singleJustTriggeredRef.current = false;
   });
 
+  // Load persisted state once on mount
+  const persisted = useRef(loadScopeState()).current;
+
   // Vertical state (new hardware layout)
-  const [ch1Vertical, setCh1Vertical] = useState<VerticalState>({
-    enabled: true, vDiv: 0.5, position: 0, coupling: "dc",
-    probe: 1, invert: false, bwLimit: false,
-  });
-  const [ch2Vertical, setCh2Vertical] = useState<VerticalState>({
-    enabled: true, vDiv: 0.5, position: 0, coupling: "dc",
-    probe: 1, invert: false, bwLimit: false,
-  });
+  const [ch1Vertical, setCh1Vertical] = useState<VerticalState>(
+    persisted?.ch1Vertical ?? { enabled: true, vDiv: 0.5, position: 0, coupling: "dc", probe: 1, invert: false, bwLimit: false }
+  );
+  const [ch2Vertical, setCh2Vertical] = useState<VerticalState>(
+    persisted?.ch2Vertical ?? { enabled: true, vDiv: 0.5, position: 0, coupling: "dc", probe: 1, invert: false, bwLimit: false }
+  );
 
   // Horizontal state
-  const [horizontal, setHorizontal] = useState<HorizontalState>({
-    sDiv: 0.002, position: 0, acquireMode: "normal",
-    averageCount: 16, rollMode: false,
-  });
+  const [horizontal, setHorizontal] = useState<HorizontalState>(
+    persisted?.horizontal ?? { sDiv: 0.002, position: 0, acquireMode: "normal", averageCount: 16, rollMode: false }
+  );
 
   // Sync horizontal panel acquire mode to global acquireMode
   useEffect(() => {
@@ -245,18 +258,17 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
   }, [horizontal.acquireMode, horizontal.rollMode]);
 
   // Trigger state
-  const [trigger, setTrigger] = useState<TriggerState>({
-    source: "ch1", level: 0, slope: "rise",
-    mode: "smart", coupling: "dc", holdoff: 0,
-  });
+  const [trigger, setTrigger] = useState<TriggerState>(
+    persisted?.trigger ?? { source: "ch1", level: 0, slope: "rise", mode: "smart", coupling: "dc", holdoff: 0 }
+  );
 
   // Math state
-  const [math, setMath] = useState<MathState>({
-    enabled: false, sourceA: "ch1", sourceB: "ch2", op: "add",
-  });
+  const [math, setMath] = useState<MathState>(
+    persisted?.math ?? { enabled: false, sourceA: "ch1", sourceB: "ch2", op: "add" }
+  );
 
   // Digital phosphor state
-  const [phosphorEnabled, setPhosphorEnabled] = useState(false);
+  const [phosphorEnabled, setPhosphorEnabled] = useState(persisted?.phosphorEnabled ?? false);
   const phosphorEnabledRef = useRef(phosphorEnabled);
   useEffect(() => { phosphorEnabledRef.current = phosphorEnabled; }, [phosphorEnabled]);
   const phosphorGrid = useRef<number[][]>([]);
@@ -266,7 +278,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
   const viewMode = math.enabled && math.op === "fft" ? "fft" : math.enabled && math.op === "xy" ? "xy" : "time";
 
   // Sample rate (shared)
-  const [sampleRate, setSampleRate] = useState(4_000_000);
+  const [sampleRate, setSampleRate] = useState(persisted?.sampleRate ?? 4_000_000);
 
   // Measurements
   const [ch1Meas, setCh1Meas] = useState<Measurements>({
@@ -304,6 +316,14 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
   useEffect(() => { sampleRateRef.current = sampleRate; }, [sampleRate]);
   const mathRef = useRef(math);
   useEffect(() => { mathRef.current = math; }, [math]);
+
+  // Persist state on changes (survives F5, resets on new tab / hard refresh)
+  useEffect(() => {
+    saveScopeState({
+      ch1Vertical, ch2Vertical, horizontal, trigger, math,
+      phosphorEnabled, sampleRate,
+    });
+  }, [ch1Vertical, ch2Vertical, horizontal, trigger, math, phosphorEnabled, sampleRate]);
 
   // Auto-start when connected and active
   useEffect(() => {
