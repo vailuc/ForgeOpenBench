@@ -5,7 +5,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import type { PluginLifecycle, PluginBus } from "../types";
 import { getSharedUsbTransport, resetSharedUsbTransport } from "./sharedUsbTransport";
 import { WaveformLaView } from "./WaveformLaView";
-import { WaveformDsoView } from "./WaveformDsoView";
+import { WaveformDsoView } from "./WaveformDsoLegacyView";
 import type { UsbDeviceInfo } from "./usbTypes";
 import { useSettingsStore } from "../../core/settings_store";
 
