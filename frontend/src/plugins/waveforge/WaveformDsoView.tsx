@@ -93,7 +93,8 @@ function calcMeasurements(buf: number[], rate: number): Measurements {
 
 /* ── Autoset: compute ideal V/div, s/div, trigger level ───────────── */
 function autoset(ch1Buf: number[], ch2Buf: number[], rate: number, vDivSteps: number[], sDivSteps: number[]) {
-  const buf = ch1Buf.length > 10 ? ch1Buf : ch2Buf;
+  const useCh1 = ch1Buf.length > 10;
+  const buf = useCh1 ? ch1Buf : ch2Buf;
   if (buf.length < 10) return null;
 
   const vpp = Math.max(...buf) - Math.min(...buf);
@@ -107,7 +108,7 @@ function autoset(ch1Buf: number[], ch2Buf: number[], rate: number, vDivSteps: nu
 
   const triggerLevel = (Math.max(...buf) + Math.min(...buf)) / 2;
 
-  return { vDiv, sDiv, triggerLevel };
+  return { vDiv, sDiv, triggerLevel, source: useCh1 ? "ch1" : "ch2" as "ch1" | "ch2" };
 }
 
 /* ── FFT helper (radix-2 Cooley-Tukey) ─────────────────────────────── */
@@ -203,8 +204,8 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
   const triggerArmedRef = useRef(true); // for Normal mode: re-arm after signal leaves trigger zone
   // Smart trigger state machine
   const smartStateRef = useRef<"auto" | "normal">("auto");
-  const smartTimerRef = useRef(0); // time entered auto sub-state with trigger present
-  const smartLastRenderRef = useRef(0); // last render time in normal sub-state
+  const smartTriggerCountRef = useRef(0); // consecutive triggered evaluations in auto sub-state
+  const smartMissCountRef = useRef(0);    // consecutive missed triggers in normal sub-state
   useEffect(() => {
     const mode = acquireModeRef.current;
     runningRef.current = mode !== "stopped" && mode !== "single-held";
@@ -345,7 +346,9 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
     const drawTriggerLine = (u: uPlot) => {
       if (mode !== "time") return;
       const level = triggerRef.current.level;
-      const posOff = (triggerRef.current.source === "ch2" ? ch2Vertical.position : ch1Vertical.position) / 1000;
+      const posOff = (triggerRef.current.source === "ch2"
+        ? ch2Vertical.position * ch2Vertical.vDiv
+        : ch1Vertical.position * ch1Vertical.vDiv);
       const ctx = u.ctx;
       const plotTop = u.bbox.top;
       const plotH = u.bbox.height;
@@ -463,7 +466,9 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
     }
     plotRef.current = new uPlot(opts, [[], [], [], []], container);
     if (mode === "time") {
-      const posOffset = (triggerRef.current.source === "ch2" ? ch2Vertical.position : ch1Vertical.position) / 1000;
+      const posOffset = (triggerRef.current.source === "ch2"
+        ? ch2Vertical.position * ch2Vertical.vDiv
+        : ch1Vertical.position * ch1Vertical.vDiv);
       const yRange = ch1Vertical.vDiv * 10;
       const yMin = -yRange / 2 + posOffset;
       const yMax = yRange / 2 + posOffset;
@@ -875,7 +880,9 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       if (isAcquiring) {
         const dataMax = sn > 0 ? (startIdx + (m - 1) * step) * dt : 0;
         const delay = (horizontalRef.current.position / 100) * dataMax;
-        const posOffset = (triggerRef.current.source === "ch2" ? ch2VerticalRef.current.position : ch1VerticalRef.current.position) / 1000;
+        const posOffset = (triggerRef.current.source === "ch2"
+          ? ch2VerticalRef.current.position * ch2VerticalRef.current.vDiv
+          : ch1VerticalRef.current.position * ch1VerticalRef.current.vDiv);
         const yRange = ch1VerticalRef.current.vDiv * 10;
         const yMin = -yRange / 2 + posOffset;
         const yMax = yRange / 2 + posOffset;
@@ -890,7 +897,6 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       if (detectTrigger(sourceBuf)) {
         setAcquireMode("single-held");
         renderNow(ch1Buf.current, ch2Buf.current);
-        smartLastRenderRef.current = nowPerf;
         void stop(true);
       }
       return;
@@ -898,7 +904,6 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
 
     if (mode === "averaging") {
       if (detectTrigger(sourceBuf)) {
-        smartLastRenderRef.current = nowPerf;
         const n = ch1Buf.current.length;
         if (avgAccumCount.current === 0) {
           avgBuf1.current = new Array(n).fill(0);
@@ -959,19 +964,19 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
           renderNow(ch1Buf.current, ch2Buf.current);
           triggerArmedRef.current = true;
           if (triggered) {
-            if (smartTimerRef.current === 0) smartTimerRef.current = nowPerf;
-            if (nowPerf - smartTimerRef.current > 600) {
+            smartTriggerCountRef.current++;
+            if (smartTriggerCountRef.current > 6) { // ~300ms at 50ms throttle
               smartStateRef.current = "normal";
-              smartLastRenderRef.current = nowPerf;
+              smartMissCountRef.current = 0;
             }
           } else {
-            smartTimerRef.current = 0;
+            smartTriggerCountRef.current = 0;
           }
         } else {
           // Normal-like
           if (triggered && triggerArmedRef.current) {
             renderNow(ch1Buf.current, ch2Buf.current);
-            smartLastRenderRef.current = nowPerf;
+            smartMissCountRef.current = 0;
             triggerArmedRef.current = false;
           }
           // Re-arm when signal leaves trigger zone
@@ -984,10 +989,15 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
             if (slope === "fall" && last > level + margin) triggerArmedRef.current = true;
             if (slope === "both" && (last < level - margin || last > level + margin)) triggerArmedRef.current = true;
           }
-          // Revert to auto after 800ms without trigger
-          if (nowPerf - smartLastRenderRef.current > 800) {
+          // Count missed triggers
+          if (!triggered || !triggerArmedRef.current) {
+            smartMissCountRef.current++;
+          }
+          // Revert to auto after ~500ms without trigger (10 evaluations at 50ms)
+          if (smartMissCountRef.current > 10) {
             smartStateRef.current = "auto";
-            smartTimerRef.current = 0;
+            smartTriggerCountRef.current = 0;
+            smartMissCountRef.current = 0;
             triggerArmedRef.current = true;
           }
         }
@@ -1006,8 +1016,8 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
     plotThrottleRef.current = 0;
     triggerArmedRef.current = true;
     smartStateRef.current = "auto";
-    smartTimerRef.current = 0;
-    smartLastRenderRef.current = 0;
+    smartTriggerCountRef.current = 0;
+    smartMissCountRef.current = 0;
     try {
       await transport.configure({
         mode: "dso",
@@ -1093,7 +1103,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       setCh1Vertical(prev => ({ ...prev, vDiv: result.vDiv }));
       setCh2Vertical(prev => ({ ...prev, vDiv: result.vDiv }));
       setHorizontal(prev => ({ ...prev, sDiv: result.sDiv }));
-      setTrigger(prev => ({ ...prev, level: result.triggerLevel }));
+      setTrigger(prev => ({ ...prev, level: result.triggerLevel, source: result.source }));
     }
   };
   const handleForceTrigger = () => {

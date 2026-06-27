@@ -1,5 +1,5 @@
 import { CollapsibleSection } from "./CollapsibleSection";
-import { VDIV_STEPS, formatVDiv, vDivToVpp } from "./scopeConstants";
+import { VDIV_STEPS, formatVDiv } from "./scopeConstants";
 import type { VerticalState } from "./scopeTypes";
 
 interface Props {
@@ -53,11 +53,11 @@ function ChannelControls({
             </select>
           </div>
 
-          {/* Position */}
+          {/* Position (divisions) */}
           <div className="flex items-center gap-1">
             <span className="text-[10px] text-fob-text-dim w-8">Pos</span>
             <button
-              onClick={() => onChange({ ...state, position: Math.max(-vDivToVpp(state.vDiv) * 500, state.position - 10) })}
+              onClick={() => onChange({ ...state, position: Math.max(-5, state.position - 0.5) })}
               disabled={disabled}
               className="px-1 rounded bg-fob-bg border border-fob-border hover:bg-fob-border text-[10px] disabled:opacity-40"
             >
@@ -65,29 +65,23 @@ function ChannelControls({
             </button>
             <input
               type="range"
-              min={-vDivToVpp(state.vDiv) * 500}
-              max={vDivToVpp(state.vDiv) * 500}
-              step={1}
+              min={-5}
+              max={5}
+              step={0.1}
               value={state.position}
               onChange={(e) => onChange({ ...state, position: Number(e.target.value) })}
               disabled={disabled}
               className={`flex-1 min-w-0 ${accent}`}
             />
             <button
-              onClick={() => onChange({ ...state, position: Math.min(vDivToVpp(state.vDiv) * 500, state.position + 10) })}
+              onClick={() => onChange({ ...state, position: Math.min(5, state.position + 0.5) })}
               disabled={disabled}
               className="px-1 rounded bg-fob-bg border border-fob-border hover:bg-fob-border text-[10px] disabled:opacity-40"
             >
               +
             </button>
           </div>
-          <input
-            type="number"
-            className="w-full bg-fob-bg border border-fob-border rounded px-1 py-0.5 text-[11px] text-fob-text"
-            value={state.position}
-            onChange={(e) => onChange({ ...state, position: Number(e.target.value) })}
-            disabled={disabled}
-          />
+          <div className="text-right text-[10px] text-fob-text-dim">{state.position.toFixed(1)} div</div>
 
           {/* Coupling */}
           <div className="flex items-center gap-1">
