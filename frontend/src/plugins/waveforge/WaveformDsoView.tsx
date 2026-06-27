@@ -1089,10 +1089,10 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       <div className="flex flex-1 gap-1 overflow-hidden min-h-0">
         {/* Canvas */}
         <div className="flex flex-col flex-1 min-h-0 min-w-0 gap-1">
+          <div ref={plotDivRef} className="flex-1 rounded border border-fob-border overflow-hidden bg-fob-surface min-h-0 min-w-0" />
           {viewMode === "time" && (
             <div ref={overviewDivRef} className="h-20 rounded border border-fob-border overflow-hidden bg-fob-surface shrink-0 min-w-0" />
           )}
-          <div ref={plotDivRef} className="flex-1 rounded border border-fob-border overflow-hidden bg-fob-surface min-h-0 min-w-0" />
         </div>
 
         {/* Right Control Panel */}
