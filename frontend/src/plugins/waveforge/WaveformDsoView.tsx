@@ -168,6 +168,20 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
     averageCount: 16, rollMode: false,
   });
 
+  // Sync horizontal panel acquire mode to global acquireMode
+  useEffect(() => {
+    const mode = acquireModeRef.current;
+    if (mode === "stopped" || mode === "single-held") return; // don't auto-start
+    if (horizontal.rollMode) {
+      if (mode !== "rolling") setAcquireMode("rolling");
+    } else if (horizontal.acquireMode === "average") {
+      if (mode !== "averaging") setAcquireMode("averaging");
+    } else {
+      if (mode !== "running") setAcquireMode("running");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [horizontal.acquireMode, horizontal.rollMode]);
+
   // Trigger state
   const [trigger, setTrigger] = useState<TriggerState>({
     source: "ch1", level: 0, slope: "rise",
@@ -344,87 +358,112 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       setCh2Meas(m2);
     }
 
-    // Single-shot trigger check
-    if (singleArmedRef.current) {
-      const buf = triggerRef.current.source === "ch2" ? ch2Buf.current : ch1Buf.current;
-      if (buf.length > 100) {
-        const level = triggerRef.current.level;
-        const slope = triggerRef.current.slope;
-        let triggered = false;
-        // Check last 500 samples for trigger crossing
-        const checkStart = Math.max(0, buf.length - 500);
-        for (let i = checkStart + 1; i < buf.length; i++) {
-          const prev = buf[i - 1];
-          const curr = buf[i];
-          if (slope === "rise" && prev <= level && curr > level) { triggered = true; break; }
-          if (slope === "fall" && prev >= level && curr < level) { triggered = true; break; }
-          if (slope === "both" && ((prev <= level && curr > level) || (prev >= level && curr < level))) {
-            triggered = true; break;
-          }
-        }
-        if (triggered) {
-          singleArmedRef.current = false;
-          singleJustTriggeredRef.current = true;
-          // Force one render then stop
-          plotThrottleRef.current = 0; // force redraw
-          // Fall through to render below, then stop after
-        }
-      }
-    }
-
-    // Plot (throttled ~20fps)
+    // ── Mode-aware render decision ────────────────────────────────────
+    const mode = acquireModeRef.current;
     const nowPerf = performance.now();
-    if (!pausedRef.current && nowPerf - plotThrottleRef.current > 50) {
+    if (mode === "stopped" || mode === "single-held") return;
+
+    // Trigger detection helper
+    const detectTrigger = (buf: number[]): boolean => {
+      if (buf.length < 100) return false;
+      const level = triggerRef.current.level;
+      const slope = triggerRef.current.slope;
+      const checkStart = Math.max(0, buf.length - 500);
+      for (let i = checkStart + 1; i < buf.length; i++) {
+        const prev = buf[i - 1], curr = buf[i];
+        if (slope === "rise" && prev <= level && curr > level) return true;
+        if (slope === "fall" && prev >= level && curr < level) return true;
+        if (slope === "both" && ((prev <= level && curr > level) || (prev >= level && curr < level))) return true;
+      }
+      return false;
+    };
+
+    // Render helper
+    const renderNow = (ch1: number[], ch2: number[]) => {
       plotThrottleRef.current = nowPerf;
-      const n = ch1Buf.current.length;
+      const n = ch1.length;
       const width = plotRef.current?.width ?? 1000;
       const target = Math.max(1000, width * 2);
-      // Compute math trace if enabled
       const doMath = mathRef.current.enabled && mathRef.current.op !== "fft" && mathRef.current.op !== "xy";
       if (doMath) {
-        const a = mathRef.current.sourceA === "ch2" ? ch2Buf.current : ch1Buf.current;
-        const b = mathRef.current.sourceB === "ch2" ? ch2Buf.current : ch1Buf.current;
+        const a = mathRef.current.sourceA === "ch2" ? ch2 : ch1;
+        const b = mathRef.current.sourceB === "ch2" ? ch2 : ch1;
         mathBuf.current = new Array(n).fill(0);
-        const op = mathRef.current.op;
         for (let i = 0; i < n; i++) {
           const av = a[i] ?? 0, bv = b[i] ?? 0;
+          const op = mathRef.current.op;
           if (op === "add") mathBuf.current[i] = av + bv;
           else if (op === "sub") mathBuf.current[i] = av - bv;
           else if (op === "mul") mathBuf.current[i] = av * bv;
           else if (op === "div") mathBuf.current[i] = bv !== 0 ? av / bv : 0;
         }
       }
-
       if (n <= target) {
         const xs = Float64Array.from({ length: n }, (_, i) => i * dt);
-        if (doMath) {
-          plotRef.current?.setData([xs, new Float64Array(ch1Buf.current), new Float64Array(ch2Buf.current), new Float64Array(mathBuf.current)]);
-        } else {
-          plotRef.current?.setData([xs, new Float64Array(ch1Buf.current), new Float64Array(ch2Buf.current)]);
-        }
+        if (doMath) plotRef.current?.setData([xs, new Float64Array(ch1), new Float64Array(ch2), new Float64Array(mathBuf.current)]);
+        else plotRef.current?.setData([xs, new Float64Array(ch1), new Float64Array(ch2)]);
       } else {
         const step = Math.floor(n / target);
         const m = Math.ceil(n / step);
-        const xs = new Float64Array(m);
-        const ys1 = new Float64Array(m);
-        const ys2 = new Float64Array(m);
-        for (let i = 0, j = 0; i < n; i += step, j++) {
-          xs[j] = i * dt;
-          ys1[j] = ch1Buf.current[i];
-          ys2[j] = ch2Buf.current[i];
-        }
+        const xs = new Float64Array(m), ys1 = new Float64Array(m), ys2 = new Float64Array(m);
+        for (let i = 0, j = 0; i < n; i += step, j++) { xs[j] = i * dt; ys1[j] = ch1[i]; ys2[j] = ch2[i]; }
         if (doMath) {
           const ysM = new Float64Array(m);
           for (let i = 0, j = 0; i < n; i += step, j++) ysM[j] = mathBuf.current[i];
           plotRef.current?.setData([xs, ys1, ys2, ysM]);
-        } else {
-          plotRef.current?.setData([xs, ys1, ys2]);
+        } else plotRef.current?.setData([xs, ys1, ys2]);
+      }
+    };
+
+    const sourceBuf = triggerRef.current.source === "ch2" ? ch2Buf.current : ch1Buf.current;
+
+    if (mode === "single-armed") {
+      if (detectTrigger(sourceBuf)) {
+        setAcquireMode("single-held");
+        renderNow(ch1Buf.current, ch2Buf.current);
+        void stop(true);
+      }
+      return;
+    }
+
+    if (mode === "averaging") {
+      if (detectTrigger(sourceBuf)) {
+        const n = ch1Buf.current.length;
+        if (avgAccumCount.current === 0) {
+          avgBuf1.current = new Array(n).fill(0);
+          avgBuf2.current = new Array(n).fill(0);
+        }
+        for (let i = 0; i < n; i++) {
+          avgBuf1.current[i] += ch1Buf.current[i];
+          avgBuf2.current[i] += ch2Buf.current[i];
+        }
+        avgAccumCount.current++;
+        const targetCount = horizontalRef.current.averageCount;
+        if (avgAccumCount.current >= targetCount) {
+          const divisor = avgAccumCount.current;
+          const avg1 = avgBuf1.current.map(v => v / divisor);
+          const avg2 = avgBuf2.current.map(v => v / divisor);
+          renderNow(avg1, avg2);
+          avgAccumCount.current = 0;
+          avgBuf1.current = [];
+          avgBuf2.current = [];
         }
       }
-      // If this render was forced by single-shot trigger, stop after drawing
-      if (singleJustTriggeredRef.current) {
-        singleJustTriggeredRef.current = false;
-        void stop(true);
+      return;
+    }
+
+    if (mode === "rolling") {
+      // Bypass trigger, render latest window continuously
+      if (nowPerf - plotThrottleRef.current > 50) {
+        renderNow(ch1Buf.current, ch2Buf.current);
+      }
+      return;
+    }
+
+    // mode === "running"
+    if (nowPerf - plotThrottleRef.current > 50) {
+      if (triggerRef.current.mode === "auto" || detectTrigger(sourceBuf)) {
+        renderNow(ch1Buf.current, ch2Buf.current);
       }
     }
   }, [vpp, windowMs]);
