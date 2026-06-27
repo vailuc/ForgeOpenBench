@@ -1,18 +1,35 @@
 import { CollapsibleSection } from "./CollapsibleSection";
-import { SDIV_STEPS, formatSDiv, sDivToWindowMs } from "./scopeConstants";
+import { SDIV_STEPS, formatSDiv, sDivToWindowMs, SAMPLE_RATES_DSO } from "./scopeConstants";
 import type { HorizontalState } from "./scopeTypes";
 
 interface Props {
   state: HorizontalState;
   onChange: (s: HorizontalState) => void;
+  sampleRate: number;
+  onSampleRateChange: (hz: number) => void;
   disabled: boolean;
 }
 
-export function HorizontalPanel({ state, onChange, disabled }: Props) {
+export function HorizontalPanel({ state, onChange, sampleRate, onSampleRateChange, disabled }: Props) {
   const windowMs = sDivToWindowMs(state.sDiv);
 
   return (
     <CollapsibleSection title="Horizontal" defaultOpen>
+      {/* Sample Rate */}
+      <div className="flex items-center gap-1">
+        <span className="text-[10px] text-fob-text-dim w-10">Rate</span>
+        <select
+          className="flex-1 bg-fob-bg border border-fob-border rounded px-1 py-0.5 text-[11px] text-fob-text"
+          value={sampleRate}
+          onChange={(e) => onSampleRateChange(Number(e.target.value))}
+          disabled={disabled}
+        >
+          {SAMPLE_RATES_DSO.map((r) => (
+            <option key={r.hz} value={r.hz}>{r.label}</option>
+          ))}
+        </select>
+      </div>
+
       {/* s/div */}
       <div className="flex items-center gap-1">
         <span className="text-[10px] text-fob-text-dim w-10">s/div</span>

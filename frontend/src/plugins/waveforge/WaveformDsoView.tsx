@@ -153,7 +153,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
   });
 
   // Sample rate (shared)
-  const [sampleRate] = useState(4_000_000);
+  const [sampleRate, setSampleRate] = useState(4_000_000);
 
   // Measurements
   const [ch1Meas, setCh1Meas] = useState<Measurements>({
@@ -482,6 +482,8 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
           <HorizontalPanel
             state={horizontal}
             onChange={setHorizontal}
+            sampleRate={sampleRate}
+            onSampleRateChange={setSampleRate}
             disabled={false}
           />
           {/* TODO: Phase 2 — TriggerPanel */}
