@@ -642,12 +642,14 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       // Trigger alignment: find trigger in source buffer and center window
       const tSrc = triggerRef.current.source === "ch2" ? r2 : r1;
       const tIdx = findTriggerIndex(tSrc);
-      const alignTrigger = tIdx >= 0 && rn > target;
+      const sr = sampleRateRef.current || 4_000_000;
+      const windowSamples = Math.max(100, Math.ceil(windowMs / 1000 * sr));
+      const alignTrigger = tIdx >= 0 && rn > windowSamples;
       let s1 = r1, s2 = r2, sM = mathArr;
       let startIdx = 0;
       if (alignTrigger) {
-        const preTrigger = Math.floor(target * 0.25); // trigger at 25% from left
-        const postTrigger = target - preTrigger;
+        const preTrigger = Math.floor(windowSamples * 0.25); // trigger at 25% from left
+        const postTrigger = windowSamples - preTrigger;
         startIdx = Math.max(0, tIdx - preTrigger);
         const endIdx = Math.min(rn, tIdx + postTrigger);
         s1 = r1.slice(startIdx, endIdx);
