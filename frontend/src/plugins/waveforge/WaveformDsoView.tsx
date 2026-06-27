@@ -250,6 +250,8 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
 
   // Digital phosphor state
   const [phosphorEnabled, setPhosphorEnabled] = useState(false);
+  const phosphorEnabledRef = useRef(phosphorEnabled);
+  useEffect(() => { phosphorEnabledRef.current = phosphorEnabled; }, [phosphorEnabled]);
   const phosphorGrid = useRef<number[][]>([]);
   const phosphorDecay = useRef(0.9); // decay factor per frame
 
@@ -584,7 +586,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
         for (let i = 0; i < len; i++) { xs[i] = a[i]; ys[i] = b[i]; }
         plot.setData([xs, ys, new Float64Array(len), new Float64Array(len)]);
         // Phosphor accumulation for XY
-        if (phosphorEnabled) {
+        if (phosphorEnabledRef.current) {
           const gridW = 80, gridH = 60;
           if (phosphorGrid.current.length !== gridH || (phosphorGrid.current[0]?.length ?? 0) !== gridW) {
             phosphorGrid.current = Array.from({ length: gridH }, () => new Array(gridW).fill(0));
@@ -663,7 +665,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       const sn = s1.length;
 
       // Phosphor accumulation for time mode
-      if (phosphorEnabled && sn > 0) {
+      if (phosphorEnabledRef.current && sn > 0) {
         const gridW = 80, gridH = 60;
         if (phosphorGrid.current.length !== gridH || (phosphorGrid.current[0]?.length ?? 0) !== gridW) {
           phosphorGrid.current = Array.from({ length: gridH }, () => new Array(gridW).fill(0));
