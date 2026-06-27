@@ -317,6 +317,10 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
   useEffect(() => { horizontalRef.current = horizontal; }, [horizontal]);
   useEffect(() => { triggerRef.current = trigger; }, [trigger]);
   useEffect(() => { sampleRateRef.current = sampleRate; }, [sampleRate]);
+  // Clear phosphor history when trigger mode changes — old ghosts don't match new mode behavior
+  useEffect(() => {
+    phosphorTraces.current = [];
+  }, [trigger.mode]);
   const mathRef = useRef(math);
   useEffect(() => { mathRef.current = math; }, [math]);
 
@@ -405,15 +409,17 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       const ctx = u.ctx;
       const traces = phosphorTraces.current;
       const n = traces.length;
-      for (let t = 0; t < n; t++) {
+      // Skip the newest trace — uPlot already drew it at full opacity.
+      // Only draw older traces as fading ghosts.
+      for (let t = 0; t < n - 1; t++) {
         const snap = traces[t];
-        const age = n - 1 - t; // 0 = newest (current)
-        const opacity = age === 0 ? 1.0 : Math.max(0, 1 - age / MAX_PHOSPHOR_TRACES) * 0.35;
+        const age = n - 1 - t; // 1 = oldest in buffer
+        const opacity = Math.max(0, 1 - age / MAX_PHOSPHOR_TRACES) * 0.35;
         if (opacity <= 0) continue;
         // CH1 echo
         ctx.beginPath();
-        ctx.strokeStyle = age === 0 ? "rgba(245,158,11,1)" : `rgba(245,158,11,${opacity})`;
-        ctx.lineWidth = age === 0 ? 1.5 : 1;
+        ctx.strokeStyle = `rgba(245,158,11,${opacity})`;
+        ctx.lineWidth = 1;
         let first = true;
         for (let i = 0; i < snap.xs.length; i++) {
           const x = u.valToPos(snap.xs[i], "x", true);
@@ -425,8 +431,8 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
         ctx.stroke();
         // CH2 echo
         ctx.beginPath();
-        ctx.strokeStyle = age === 0 ? "rgba(96,165,250,1)" : `rgba(96,165,250,${opacity})`;
-        ctx.lineWidth = age === 0 ? 1.5 : 1;
+        ctx.strokeStyle = `rgba(96,165,250,${opacity})`;
+        ctx.lineWidth = 1;
         first = true;
         for (let i = 0; i < snap.xs.length; i++) {
           const x = u.valToPos(snap.xs[i], "x", true);
@@ -975,6 +981,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
             if (smartTriggerCountRef.current > 6) { // ~300ms at 50ms throttle
               smartStateRef.current = "locked";
               smartMissCountRef.current = 0;
+              phosphorTraces.current = []; // clear free-run ghosts, start clean locked history
             }
           } else {
             smartTriggerCountRef.current = 0;
@@ -992,6 +999,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
             smartStateRef.current = "auto";
             smartTriggerCountRef.current = 0;
             smartMissCountRef.current = 0;
+            phosphorTraces.current = []; // clear stale ghosts on mode transition
           }
         }
       }
