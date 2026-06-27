@@ -1505,6 +1505,8 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
         onAutoSet={handleAutoSet}
         onForceTrigger={handleForceTrigger}
         onClear={handleClear}
+        triggerMode={trigger.mode}
+        onSetTriggerMode={(mode) => setTrigger(prev => ({ ...prev, mode }))}
         sampleRateLabel={rateLabel}
         sDivLabel={formatSDiv(horizontal.sDiv)}
         connected={connected}

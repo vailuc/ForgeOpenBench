@@ -7,6 +7,8 @@ interface Props {
   onAutoSet: () => void;
   onForceTrigger: () => void;
   onClear: () => void;
+  triggerMode: "auto" | "normal" | "single" | "smart";
+  onSetTriggerMode: (mode: "auto" | "normal" | "single" | "smart") => void;
   sampleRateLabel: string;
   sDivLabel: string;
   connected: boolean;
@@ -14,6 +16,7 @@ interface Props {
 
 export function AcquireToolbar({
   running, paused, onRun, onStop, onSingle, onAutoSet, onForceTrigger, onClear,
+  triggerMode, onSetTriggerMode,
   sampleRateLabel, sDivLabel, connected,
 }: Props) {
   return (
@@ -61,6 +64,23 @@ export function AcquireToolbar({
       >
         Clear
       </button>
+      <div className="w-px h-5 bg-fob-border mx-1" />
+      {/* Trigger mode toggle — auto / normal / single / smart */}
+      <div className="flex rounded overflow-hidden border border-fob-border">
+        {(["auto", "normal", "single", "smart"] as const).map((m) => (
+          <button
+            key={m}
+            onClick={() => onSetTriggerMode(m)}
+            className={`px-2 py-1 text-[11px] font-bold transition-colors ${
+              triggerMode === m
+                ? "bg-fob-blue text-fob-accent-text"
+                : "bg-fob-surface text-fob-text hover:bg-fob-border"
+            }`}
+          >
+            {m === "auto" ? "Auto" : m === "normal" ? "Norm" : m === "single" ? "Single" : "Smart"}
+          </button>
+        ))}
+      </div>
 
       <div className="flex-1" />
 
