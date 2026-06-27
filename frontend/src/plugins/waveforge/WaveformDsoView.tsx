@@ -305,13 +305,13 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
   const mathRef = useRef(math);
   useEffect(() => { mathRef.current = math; }, [math]);
 
-  // Auto-start when connected
+  // Auto-start when connected and active
   useEffect(() => {
-    if (connected && !runningRef.current && !pausedRef.current) {
+    if (connected && isActive && !runningRef.current && !pausedRef.current) {
       void start();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connected]);
+  }, [connected, isActive]);
 
   // Build / rebuild uPlot
   const buildPlot = useCallback((container: HTMLDivElement, overviewContainer?: HTMLDivElement) => {
