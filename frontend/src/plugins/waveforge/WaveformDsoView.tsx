@@ -478,6 +478,8 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
     let panStartXMin = 0, panStartXMax = 0, panStartYMin = 0, panStartYMax = 0;
 
     const onMouseDown = (e: MouseEvent) => {
+      const amode = acquireModeRef.current;
+      if (amode === "running" || amode === "rolling" || amode === "single-armed" || amode === "averaging") return;
       if (e.button !== 0) return;
       const plot = plotRef.current;
       if (!plot) return;
@@ -506,6 +508,8 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
     const onMouseUp = () => { isPanning = false; };
 
     const onWheel = (e: WheelEvent) => {
+      const amode = acquireModeRef.current;
+      if (amode === "running" || amode === "rolling" || amode === "single-armed" || amode === "averaging") return;
       e.preventDefault();
       const plot = plotRef.current;
       if (!plot) return;
