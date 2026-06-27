@@ -422,9 +422,9 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
         const xSrc = snap.mode === "time" ? currentX : snap.xs;
         if (!xSrc) continue;
         const len = Math.min(xSrc.length, snap.ys1.length, snap.ys2.length);
-        // CH1 echo
+        // CH1 echo — darker amber shadow
         ctx.beginPath();
-        ctx.strokeStyle = `rgba(245,158,11,${opacity})`;
+        ctx.strokeStyle = `rgba(160,90,20,${opacity})`;
         ctx.lineWidth = 1;
         let first = true;
         for (let i = 0; i < len; i++) {
@@ -435,9 +435,9 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
           else { ctx.lineTo(x, y); }
         }
         ctx.stroke();
-        // CH2 echo
+        // CH2 echo — darker navy shadow
         ctx.beginPath();
-        ctx.strokeStyle = `rgba(96,165,250,${opacity})`;
+        ctx.strokeStyle = `rgba(30,60,140,${opacity})`;
         ctx.lineWidth = 1;
         first = true;
         for (let i = 0; i < len; i++) {
