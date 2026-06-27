@@ -1119,7 +1119,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
         }
       }
       // Bypass trigger, render latest window continuously
-      if (nowPerf - plotThrottleRef.current > 50) {
+      if (nowPerf - plotThrottleRef.current > 33) {
         renderNow(ch1Buf.current, ch2Buf.current);
       } else if (nowPerf - plotThrottleRef.current > 500) {
         // eslint-disable-next-line no-console
@@ -1129,7 +1129,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
     }
 
     // mode === "running"
-    if (nowPerf - plotThrottleRef.current > 50) {
+    if (nowPerf - plotThrottleRef.current > 33) {
       const tmode = triggerRef.current.mode;
       if (tmode === "auto") {
         renderNow(ch1Buf.current, ch2Buf.current);
