@@ -413,6 +413,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
     // Digital phosphor draw hook — trace echo: draw fading copies of past traces
     const drawPhosphor = (u: uPlot) => {
       if (!phosphorEnabledRef.current || phosphorTraces.current.length === 0) return;
+      const t0 = performance.now();
       const ctx = u.ctx;
       const traces = phosphorTraces.current;
       const n = traces.length;
@@ -423,6 +424,8 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
         const opacity = Math.max(0, 1 - age / MAX_PHOSPHOR_TRACES) * 0.35;
         if (opacity <= 0) continue;
         const len = snap.ys1.length;
+        // Decimate ghost traces for performance: at most ~2000 pts per trace
+        const drawStep = Math.max(1, Math.floor(len / 2000));
         // Time mode: align all traces by their trigger point.
         // Compute x relative to the current plot's trigger screen position.
         let xFor: (i: number) => number | null;
@@ -443,7 +446,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
         ctx.strokeStyle = `rgba(160,90,20,${opacity})`;
         ctx.lineWidth = 1;
         let first = true;
-        for (let i = 0; i < len; i++) {
+        for (let i = 0; i < len; i += drawStep) {
           const x = xFor(i);
           const y = u.valToPos(snap.ys1[i], "y", true);
           if (x == null || y == null) continue;
@@ -456,7 +459,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
         ctx.strokeStyle = `rgba(30,60,140,${opacity})`;
         ctx.lineWidth = 1;
         first = true;
-        for (let i = 0; i < len; i++) {
+        for (let i = 0; i < len; i += drawStep) {
           const x = xFor(i);
           const y = u.valToPos(snap.ys2[i], "y", true);
           if (x == null || y == null) continue;
@@ -464,6 +467,11 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
           else { ctx.lineTo(x, y); }
         }
         ctx.stroke();
+      }
+      const elapsed = performance.now() - t0;
+      if (elapsed > 50) {
+        // eslint-disable-next-line no-console
+        console.log(`[DSO] drawPhosphor slow: ${elapsed.toFixed(1)}ms (${traces.length} traces)`);
       }
     };
 
@@ -776,6 +784,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       plotThrottleRef.current = nowPerf;
       const plot = plotRef.current;
       if (!plot) return;
+      const renderT0 = performance.now();
       const n = ch1.length;
       const width = plot.width ?? 1000;
       const target = Math.max(1000, width * 2);
@@ -897,9 +906,7 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       }
 
       // Render aligned or full
-      // When phosphor is on, skip decimation so all traces have matching point counts
-      // and ghosts align perfectly with the frozen trace.
-      const doDecimate = !phosphorEnabledRef.current && sn > target && !isPeak;
+      const doDecimate = sn > target && !isPeak;
       const step = doDecimate ? Math.floor(sn / target) : 1;
       const m = doDecimate ? Math.ceil(sn / step) : sn;
       let xs: Float64Array, ys1Arr: Float64Array, ys2Arr: Float64Array, ysMArr: Float64Array;
@@ -934,6 +941,11 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
         const yMax = yRange / 2 + posOffset;
         plot.setScale('x', { min: delay, max: dataMax + delay });
         plot.setScale('y', { min: yMin, max: yMax });
+      }
+      const renderElapsed = performance.now() - renderT0;
+      if (renderElapsed > 100) {
+        // eslint-disable-next-line no-console
+        console.log(`[DSO] renderNow slow: ${renderElapsed.toFixed(1)}ms (sn=${sn}, doDecimate=${doDecimate})`);
       }
     };
 
