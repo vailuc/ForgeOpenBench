@@ -996,9 +996,10 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
             smartTriggerCountRef.current = 0;
           }
         } else {
-          // Locked: display frozen, don't re-render
-          // Just monitor if signal is still present
+          // Locked: triggered updates with phosphor persistence
+          // Render when triggered (throttled) so jitter creates a fading cloud
           if (triggered) {
+            renderNow(ch1Buf.current, ch2Buf.current);
             smartMissCountRef.current = 0;
           } else {
             smartMissCountRef.current++;
