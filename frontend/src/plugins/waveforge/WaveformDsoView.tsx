@@ -168,6 +168,8 @@ function fftMagnitude(buf: number[], sampleRate: number): { freqs: number[]; mag
 export function WaveformDsoView({ transport, isActive, connected }: Props) {
   const plotDivRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
+  const overviewDivRef = useRef<HTMLDivElement>(null);
+  const overviewPlotRef = useRef<uPlot | null>(null);
 
   // Acquire state machine lite
   type AcquireMode = "stopped" | "running" | "single-armed" | "single-held" | "rolling" | "averaging";
@@ -307,8 +309,9 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
   }, [connected]);
 
   // Build / rebuild uPlot
-  const buildPlot = useCallback((container: HTMLDivElement) => {
+  const buildPlot = useCallback((container: HTMLDivElement, overviewContainer?: HTMLDivElement) => {
     if (plotRef.current) { plotRef.current.destroy(); plotRef.current = null; }
+    if (overviewPlotRef.current) { overviewPlotRef.current.destroy(); overviewPlotRef.current = null; }
     const W = container.offsetWidth || 600;
     const H = container.offsetHeight || 300;
 
@@ -464,13 +467,57 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       const initDelay = (horizontal.position / 100) * initXMax;
       plotRef.current.setScale('x', { min: initDelay, max: initXMax + initDelay });
       plotRef.current.setScale('y', { min: yMin, max: yMax });
+
+      // Overview plot
+      if (overviewContainer) {
+        const oW = overviewContainer.offsetWidth || 600;
+        const oH = overviewContainer.offsetHeight || 80;
+        const drawZoomBox = (u: uPlot) => {
+          const main = plotRef.current;
+          if (!main) return;
+          const xMin = main.scales.x.min ?? 0;
+          const xMax = main.scales.x.max ?? 0;
+          const left = u.valToPos(xMin, 'x', true);
+          const right = u.valToPos(xMax, 'x', true);
+          if (left == null || right == null) return;
+          const plotTop = u.bbox.top;
+          const plotBottom = plotTop + u.bbox.height;
+          const ctx = u.ctx;
+          ctx.save();
+          ctx.fillStyle = 'rgba(245, 158, 11, 0.15)';
+          ctx.fillRect(left, plotTop, right - left, plotBottom - plotTop);
+          ctx.strokeStyle = 'rgba(245, 158, 11, 0.6)';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(left, plotTop, right - left, plotBottom - plotTop);
+          ctx.restore();
+        };
+        const oOpts: uPlot.Options = {
+          width: oW, height: oH,
+          padding: [0, 0, 0, 0],
+          scales: { x: { time: false }, y: { auto: true } },
+          axes: [
+            { stroke: "#666688", grid: { stroke: "#1A1A2E" }, values: timeAxisValues, size: 18 },
+            { stroke: "#666688", grid: { stroke: "#1A1A2E" }, size: 18 },
+          ],
+          series: [
+            {},
+            { stroke: "#F59E0B", width: 1, label: "CH1" },
+            { stroke: "#60A5FA", width: 1, label: "CH2", show: ch2Vertical.enabled },
+            { stroke: "#4ADE80", width: 1, label: "MATH", show: math.enabled },
+          ],
+          cursor: { show: false, drag: { x: false, y: false } },
+          hooks: { draw: [drawZoomBox] },
+        };
+        overviewPlotRef.current = new uPlot(oOpts, [[], [], [], []], overviewContainer);
+      }
     }
   }, [vpp, ch1Vertical.vDiv, ch2Vertical.vDiv, ch2Vertical.enabled, math.enabled, ch1Vertical.position, ch2Vertical.position, trigger.level, horizontal.position, viewMode, phosphorEnabled]);
 
   useEffect(() => {
     const div = plotDivRef.current;
+    const odiv = overviewDivRef.current;
     if (!div) return;
-    buildPlot(div);
+    buildPlot(div, odiv ?? undefined);
 
     // Custom panning (click-drag) and wheel zoom
     let isPanning = false;
@@ -543,16 +590,38 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
     window.addEventListener('mouseup', onMouseUp);
     div.addEventListener('wheel', onWheel, { passive: false });
 
+    // Overview click-to-center
+    const onOverviewClick = (e: MouseEvent) => {
+      const oplot = overviewPlotRef.current;
+      const main = plotRef.current;
+      if (!oplot || !main) return;
+      const amode = acquireModeRef.current;
+      if (amode === "running" || amode === "rolling" || amode === "single-armed" || amode === "averaging") return;
+      const rect = odiv?.getBoundingClientRect();
+      if (!rect) return;
+      const mx = e.clientX - rect.left;
+      const val = oplot.posToVal(mx, 'x');
+      const xMin = main.scales.x.min ?? 0;
+      const xMax = main.scales.x.max ?? 0;
+      const halfSpan = (xMax - xMin) / 2;
+      main.setScale('x', { min: val - halfSpan, max: val + halfSpan });
+    };
+    odiv?.addEventListener('mousedown', onOverviewClick);
+
     const ro = new ResizeObserver(() => {
       plotRef.current?.setSize({ width: div.offsetWidth, height: div.offsetHeight });
+      if (odiv) overviewPlotRef.current?.setSize({ width: odiv.offsetWidth, height: odiv.offsetHeight });
     });
     ro.observe(div);
+    if (odiv) ro.observe(odiv);
     return () => {
       div.removeEventListener('mousedown', onMouseDown);
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
       div.removeEventListener('wheel', onWheel);
+      odiv?.removeEventListener('mousedown', onOverviewClick);
       ro.disconnect(); plotRef.current?.destroy(); plotRef.current = null;
+      overviewPlotRef.current?.destroy(); overviewPlotRef.current = null;
     };
   }, [buildPlot]);
 
@@ -790,6 +859,12 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
         }
         plot.setData([xs, ys1, ys2, ysM]);
       }
+      // Overview gets full data (no decimation)
+      const ov = overviewPlotRef.current;
+      if (ov) {
+        const xsOv = Float64Array.from({ length: rn }, (_, i) => (startIdx + i) * dt);
+        ov.setData([xsOv, new Float64Array(r1), new Float64Array(r2), new Float64Array(mathArr)]);
+      }
       // Force scale during active acquisition; allow manual zoom/pan when stopped
       const amode = acquireModeRef.current;
       const isAcquiring = amode === "running" || amode === "rolling" || amode === "single-armed" || amode === "averaging";
@@ -1013,7 +1088,12 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
       {/* Main Area: Canvas + Right Panel */}
       <div className="flex flex-1 gap-1 overflow-hidden min-h-0">
         {/* Canvas */}
-        <div ref={plotDivRef} className="flex-1 rounded border border-fob-border overflow-hidden bg-fob-surface min-h-0" />
+        <div className="flex flex-col flex-1 min-h-0 gap-1">
+          {viewMode === "time" && (
+            <div ref={overviewDivRef} className="h-20 rounded border border-fob-border overflow-hidden bg-fob-surface shrink-0" />
+          )}
+          <div ref={plotDivRef} className="flex-1 rounded border border-fob-border overflow-hidden bg-fob-surface min-h-0" />
+        </div>
 
         {/* Right Control Panel */}
         <div className="w-72 flex flex-col gap-2 shrink-0 overflow-y-auto text-[11px] px-1 py-1">
