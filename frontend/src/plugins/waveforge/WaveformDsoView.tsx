@@ -723,22 +723,13 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
     if (!div) return;
     buildPlot(div, odiv ?? undefined);
 
-    // Trigger line Y in screen coords (relative to viewport)
+    // Trigger line Y in canvas-relative coords (matches uPlot valToPos)
     const getTriggerLineY = (): number | null => {
       const plot = plotRef.current;
       if (!plot || viewMode !== "time") return null;
-      const level = triggerRef.current.level;
-      const posOff = (triggerRef.current.source === "ch2"
-        ? ch2VerticalRef.current.position * ch2VerticalRef.current.vDiv
-        : ch1VerticalRef.current.position * ch1VerticalRef.current.vDiv);
-      const yRange = ch1VerticalRef.current.vDiv * 10;
-      const vmin = -yRange / 2 + posOff;
-      const vmax = yRange / 2 + posOff;
-      const plotTop = plot.bbox.top;
-      const plotH = plot.bbox.height;
-      const yScale = plotH / (vmax - vmin);
-      const yOfs = plotTop + plotH;
-      return yOfs - (level - vmin) * yScale;
+      const y = plot.valToPos(triggerRef.current.level, "y");
+      if (y == null) return null;
+      return y;
     };
 
     // Custom panning (click-drag), trigger drag, and wheel zoom
@@ -749,14 +740,14 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
     const onMouseDown = (e: MouseEvent) => {
       if (e.button !== 0) return;
       const plot = plotRef.current;
+      if (!plot) return;
+      const canvas = plot.root.querySelector('canvas') as HTMLCanvasElement | null;
+      if (!canvas) return;
+      const canvasRect = canvas.getBoundingClientRect();
+      const my = e.clientY - canvasRect.top;
       const triggerY = getTriggerLineY();
       // eslint-disable-next-line no-console
-      console.log(`[DSO] mousedown: plot=${!!plot} viewMode=${viewMode} triggerY=${triggerY?.toFixed(1) ?? 'null'}`);
-      if (!plot) return;
-      const rect = div.getBoundingClientRect();
-      const my = e.clientY - rect.top;
-      // eslint-disable-next-line no-console
-      if (triggerY !== null) console.log(`[DSO] trigger click: my=${my.toFixed(1)} triggerY=${triggerY.toFixed(1)} diff=${Math.abs(my - triggerY).toFixed(1)}`);
+      console.log(`[DSO] trigger click: my=${my.toFixed(1)} triggerY=${triggerY?.toFixed(1) ?? 'null'} diff=${triggerY !== null ? Math.abs(my - triggerY).toFixed(1) : 'N/A'}`);
       // Check if clicking near trigger line (works even during acquisition)
       if (triggerY !== null && Math.abs(my - triggerY) <= 20) {
         isDraggingTriggerRef.current = true;
@@ -799,9 +790,16 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       }
       if (!isPanning) {
         // Hover: change cursor when near trigger line
+        const plot = plotRef.current;
         const triggerY = getTriggerLineY();
-        const rect = div.getBoundingClientRect();
-        const my = e.clientY - rect.top;
+        let my = -9999;
+        if (plot) {
+          const canvas = plot.root.querySelector('canvas') as HTMLCanvasElement | null;
+          if (canvas) {
+            const canvasRect = canvas.getBoundingClientRect();
+            my = e.clientY - canvasRect.top;
+          }
+        }
         const near = triggerY !== null && Math.abs(my - triggerY) <= 20;
         // Throttled hover log
         const now = performance.now();
