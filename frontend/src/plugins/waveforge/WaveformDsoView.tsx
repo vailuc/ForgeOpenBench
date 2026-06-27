@@ -598,8 +598,15 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
             }
           }
           // Accumulate hits
-          const xmin = Math.min(...a), xmax = Math.max(...a);
-          const ymin = Math.min(...b), ymax = Math.max(...b);
+          let xmin = Infinity, xmax = -Infinity;
+          let ymin = Infinity, ymax = -Infinity;
+          for (let i = 0; i < len; i++) {
+            const av = a[i], bv = b[i];
+            if (av < xmin) xmin = av;
+            if (av > xmax) xmax = av;
+            if (bv < ymin) ymin = bv;
+            if (bv > ymax) ymax = bv;
+          }
           const xr = xmax - xmin || 1, yr = ymax - ymin || 1;
           for (let i = 0; i < len; i++) {
             const gx = Math.min(gridW - 1, Math.max(0, Math.floor((a[i] - xmin) / xr * gridW)));
@@ -675,8 +682,14 @@ export function WaveformDsoView({ transport, isActive, connected }: Props) {
             phosphorGrid.current[y][x] *= phosphorDecay.current;
           }
         }
-        const vmin = Math.min(...s1, ...s2);
-        const vmax = Math.max(...s1, ...s2);
+        let vmin = Infinity, vmax = -Infinity;
+        for (let i = 0; i < sn; i++) {
+          const v1 = s1[i], v2 = s2[i];
+          if (v1 < vmin) vmin = v1;
+          if (v1 > vmax) vmax = v1;
+          if (v2 < vmin) vmin = v2;
+          if (v2 > vmax) vmax = v2;
+        }
         const vr = vmax - vmin || 1;
         for (let i = 0; i < sn; i++) {
           const gx = Math.min(gridW - 1, Math.max(0, Math.floor(i / sn * gridW)));
