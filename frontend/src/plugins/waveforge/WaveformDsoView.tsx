@@ -802,7 +802,15 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
         const triggerY = getTriggerLineY();
         const rect = div.getBoundingClientRect();
         const my = e.clientY - rect.top;
-        if (triggerY !== null && Math.abs(my - triggerY) <= 20) {
+        const near = triggerY !== null && Math.abs(my - triggerY) <= 20;
+        // Throttled hover log
+        const now = performance.now();
+        if (near && now - (window as any).__lastHoverLog > 500) {
+          // eslint-disable-next-line no-console
+          console.log(`[DSO] hover near trigger: my=${my.toFixed(1)} triggerY=${triggerY.toFixed(1)}`);
+          (window as any).__lastHoverLog = now;
+        }
+        if (near) {
           div.style.cursor = "ns-resize";
         } else {
           div.style.cursor = "";
