@@ -9,6 +9,8 @@ import { HorizontalPanel } from "./HorizontalPanel";
 import { TriggerPanel } from "./TriggerPanel";
 import { MathPanel } from "./MathPanel";
 import { MeasurementBar } from "./MeasurementBar";
+import { MeasurementsPanel } from "./MeasurementsPanel";
+import { CursorsPanel } from "./CursorsPanel";
 import type { Measurements, VerticalState, HorizontalState, TriggerState, MathState, MeasurementKey } from "./scopeTypes";
 import { SAMPLE_RATES_DSO, VDIV_STEPS, SDIV_STEPS, formatSDiv, vDivToVpp, sDivToWindowMs } from "./scopeConstants";
 
@@ -338,8 +340,23 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
   });
 
   // Selected measurement keys to display
-  const [ch1MeasKeys] = useState<MeasurementKey[]>(["vpp", "freq", "vrms"]);
-  const [ch2MeasKeys] = useState<MeasurementKey[]>(["vpp", "freq", "vrms"]);
+  const [ch1MeasKeys, setCh1MeasKeys] = useState<MeasurementKey[]>(["vpp", "freq", "vrms"]);
+  const [ch2MeasKeys, setCh2MeasKeys] = useState<MeasurementKey[]>(["vpp", "freq", "vrms"]);
+
+  // Cursors
+  const [cursorA, setCursorA] = useState<{ t: number; v: number } | null>(null);
+  const [cursorB, setCursorB] = useState<{ t: number; v: number } | null>(null);
+  const [cursorsEnabled, setCursorsEnabled] = useState(false);
+  const cursorARef = useRef(cursorA);
+  useEffect(() => { cursorARef.current = cursorA; }, [cursorA]);
+  const cursorBRef = useRef(cursorB);
+  useEffect(() => { cursorBRef.current = cursorB; }, [cursorB]);
+  const cursorsEnabledRef = useRef(cursorsEnabled);
+  useEffect(() => { cursorsEnabledRef.current = cursorsEnabled; }, [cursorsEnabled]);
+
+  // Reference waveform snapshot
+  const referenceSnapRef = useRef<TraceSnapshot | null>(null);
+  const [hasRef, setHasRef] = useState(false);
 
   const measThrottleRef = useRef(0);
   const plotThrottleRef = useRef(0);
@@ -601,6 +618,109 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       }
     };
 
+    // Reference waveform draw — dim snapshot behind current trace
+    const drawReference = (u: uPlot) => {
+      const snap = referenceSnapRef.current;
+      if (!snap || snap.mode !== "time" || !snap.xs) return;
+      const ctx = u.ctx;
+      const len = snap.ys1.length;
+      if (len < 2) return;
+      const drawStep = Math.max(1, Math.floor(len / 2000));
+      ctx.save();
+      // CH1 reference — dim amber
+      ctx.beginPath();
+      ctx.strokeStyle = "rgba(245, 158, 11, 0.25)";
+      ctx.lineWidth = 1;
+      let first = true;
+      for (let i = 0; i < len; i += drawStep) {
+        const x = u.valToPos(snap.xs[i], "x", true);
+        const y = u.valToPos(snap.ys1[i], "y", true);
+        if (x == null || y == null) continue;
+        if (first) { ctx.moveTo(x, y); first = false; }
+        else { ctx.lineTo(x, y); }
+      }
+      ctx.stroke();
+      // CH2 reference — dim blue
+      ctx.beginPath();
+      ctx.strokeStyle = "rgba(96, 165, 250, 0.25)";
+      ctx.lineWidth = 1;
+      first = true;
+      for (let i = 0; i < len; i += drawStep) {
+        const x = u.valToPos(snap.xs[i], "x", true);
+        const y = u.valToPos(snap.ys2[i], "y", true);
+        if (x == null || y == null) continue;
+        if (first) { ctx.moveTo(x, y); first = false; }
+        else { ctx.lineTo(x, y); }
+      }
+      ctx.stroke();
+      ctx.restore();
+    };
+
+    // Cursor draw — crosshairs on top of everything
+    const drawCursors = (u: uPlot) => {
+      const a = cursorARef.current;
+      const b = cursorBRef.current;
+      if (!a && !b) return;
+      const ctx = u.ctx;
+      const plotLeft = u.bbox.left;
+      const plotRight = plotLeft + u.bbox.width;
+      const plotTop = u.bbox.top;
+      const plotBottom = plotTop + u.bbox.height;
+      ctx.save();
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+      // Cursor A — gold
+      if (a) {
+        const x = u.valToPos(a.t, "x", true);
+        const y = u.valToPos(a.v, "y", true);
+        if (x != null) {
+          ctx.strokeStyle = "#FFD700";
+          ctx.beginPath();
+          ctx.moveTo(x, plotTop);
+          ctx.lineTo(x, plotBottom);
+          ctx.stroke();
+        }
+        if (y != null) {
+          ctx.strokeStyle = "#FFD700";
+          ctx.beginPath();
+          ctx.moveTo(plotLeft, y);
+          ctx.lineTo(plotRight, y);
+          ctx.stroke();
+        }
+        if (x != null && y != null) {
+          ctx.fillStyle = "#FFD700";
+          ctx.font = "10px monospace";
+          ctx.fillText("A", x + 2, y - 4);
+        }
+      }
+      // Cursor B — cyan
+      if (b) {
+        const x = u.valToPos(b.t, "x", true);
+        const y = u.valToPos(b.v, "y", true);
+        if (x != null) {
+          ctx.strokeStyle = "#00FFFF";
+          ctx.beginPath();
+          ctx.moveTo(x, plotTop);
+          ctx.lineTo(x, plotBottom);
+          ctx.stroke();
+        }
+        if (y != null) {
+          ctx.strokeStyle = "#00FFFF";
+          ctx.beginPath();
+          ctx.moveTo(plotLeft, y);
+          ctx.lineTo(plotRight, y);
+          ctx.stroke();
+        }
+        if (x != null && y != null) {
+          ctx.fillStyle = "#00FFFF";
+          ctx.font = "10px monospace";
+          ctx.fillText("B", x + 2, y - 4);
+        }
+      }
+      ctx.setLineDash([]);
+      ctx.restore();
+    };
+
     let opts: uPlot.Options;
 
     if (mode === "fft") {
@@ -619,7 +739,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
           { stroke: "#4ADE80", width: 1.5, label: "MATH", show: false },
         ],
         cursor: { show: true, drag: { x: false, y: false } },
-        hooks: { drawClear: [drawPhosphor] },
+        hooks: { drawClear: [drawPhosphor], draw: [drawCursors] },
       };
     } else if (mode === "xy") {
       opts = {
@@ -637,7 +757,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
           { stroke: "#4ADE80", width: 1.5, label: "MATH", show: false },
         ],
         cursor: { show: true, drag: { x: false, y: false } },
-        hooks: { drawClear: [drawPhosphor] },
+        hooks: { drawClear: [drawPhosphor], draw: [drawCursors] },
       };
     } else {
       opts = {
@@ -655,7 +775,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
           { stroke: "#4ADE80", width: 1.5, label: "MATH", show: math.enabled },
         ],
         cursor: { show: true, drag: { x: false, y: false } },
-        hooks: { drawClear: [drawTriggerLine, drawPhosphor] },
+        hooks: { drawClear: [drawReference, drawPhosphor], draw: [drawTriggerLine, drawCursors] },
       };
     }
     plotRef.current = new uPlot(opts, [[], [], [], []], container);
@@ -752,6 +872,19 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
         isDraggingTriggerRef.current = true;
         div.style.cursor = "ns-resize";
         e.preventDefault();
+        return;
+      }
+      // Cursor placement (when cursors enabled)
+      if (cursorsEnabledRef.current) {
+        const mx = e.clientX - canvasRect.left;
+        const t = plot.posToVal(mx, "x");
+        const v = plot.posToVal(my, "y");
+        if (e.shiftKey) {
+          setCursorB({ t, v });
+        } else {
+          setCursorA({ t, v });
+        }
+        plot.redraw(false, false);
         return;
       }
       // Otherwise, normal pan (only when not acquiring)
@@ -1491,6 +1624,31 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
     setCh2Meas({ vpp: 0, dc: 0, vrms: 0, freq: 0, period: 0, riseTime: 0, fallTime: 0, dutyCycle: 0, positiveWidth: 0, negativeWidth: 0 });
   };
 
+  const handleSaveReference = () => {
+    const plot = plotRef.current;
+    if (!plot || !plot.data) return;
+    const xs = plot.data[0] as Float64Array | number[];
+    const ys1 = plot.data[1] as Float64Array | number[];
+    const ys2 = plot.data[2] as Float64Array | number[];
+    if (!xs || xs.length < 2) return;
+    referenceSnapRef.current = {
+      mode: "time",
+      ys1: new Float64Array(ys1),
+      ys2: new Float64Array(ys2),
+      triggerOffset: 0,
+      dt: 0,
+      xs: new Float64Array(xs),
+    };
+    setHasRef(true);
+    plot.redraw(false, false);
+  };
+
+  const handleClearReference = () => {
+    referenceSnapRef.current = null;
+    setHasRef(false);
+    plotRef.current?.redraw(false, false);
+  };
+
   const rateLabel = SAMPLE_RATES_DSO.find(r => r.hz === sampleRate)?.label ?? `${sampleRate / 1e6}MS/s`;
 
   return (
@@ -1507,6 +1665,9 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
         onClear={handleClear}
         triggerMode={trigger.mode}
         onSetTriggerMode={(mode) => setTrigger(prev => ({ ...prev, mode }))}
+        onSaveRef={handleSaveReference}
+        onClearRef={handleClearReference}
+        hasRef={hasRef}
         sampleRateLabel={rateLabel}
         sDivLabel={formatSDiv(horizontal.sDiv)}
         connected={connected}
@@ -1548,6 +1709,18 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
             state={math}
             onChange={setMath}
             disabled={false}
+          />
+          <MeasurementsPanel
+            ch1Keys={ch1MeasKeys}
+            ch2Keys={ch2MeasKeys}
+            onCh1KeysChange={setCh1MeasKeys}
+            onCh2KeysChange={setCh2MeasKeys}
+          />
+          <CursorsPanel
+            enabled={cursorsEnabled}
+            onToggle={setCursorsEnabled}
+            cursorA={cursorA}
+            cursorB={cursorB}
           />
           {/* Display / Phosphor */}
           <div className="flex items-center gap-1.5 border-t border-fob-border pt-1">

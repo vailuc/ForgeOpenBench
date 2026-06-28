@@ -9,6 +9,9 @@ interface Props {
   onClear: () => void;
   triggerMode: "auto" | "normal" | "single" | "smart";
   onSetTriggerMode: (mode: "auto" | "normal" | "single" | "smart") => void;
+  onSaveRef: () => void;
+  onClearRef: () => void;
+  hasRef: boolean;
   sampleRateLabel: string;
   sDivLabel: string;
   connected: boolean;
@@ -17,6 +20,7 @@ interface Props {
 export function AcquireToolbar({
   running, paused, onRun, onStop, onSingle, onAutoSet, onForceTrigger, onClear,
   triggerMode, onSetTriggerMode,
+  onSaveRef, onClearRef, hasRef,
   sampleRateLabel, sDivLabel, connected,
 }: Props) {
   return (
@@ -64,6 +68,21 @@ export function AcquireToolbar({
       >
         Clear
       </button>
+      <button
+        onClick={onSaveRef}
+        disabled={!connected}
+        className="px-2 py-1 rounded bg-fob-surface border border-fob-border text-fob-text font-bold text-[11px] hover:bg-fob-border disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+      >
+        Save Ref
+      </button>
+      {hasRef && (
+        <button
+          onClick={onClearRef}
+          className="px-2 py-1 rounded bg-fob-surface border border-fob-border text-fob-text font-bold text-[11px] hover:bg-fob-border transition-colors"
+        >
+          Clear Ref
+        </button>
+      )}
       <div className="w-px h-5 bg-fob-border mx-1" />
       {/* Trigger mode toggle — auto / normal / single / smart */}
       <div className="flex rounded overflow-hidden border border-fob-border">
