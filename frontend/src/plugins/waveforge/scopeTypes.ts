@@ -57,3 +57,12 @@ export const ALL_MEASUREMENT_KEYS: MeasurementKey[] = [
   "riseTime", "fallTime", "dutyCycle",
   "positiveWidth", "negativeWidth",
 ];
+
+export interface TraceSnapshot {
+  mode: "time" | "xy";
+  xs?: Float64Array;
+  ys1: Float64Array;
+  ys2: Float64Array;
+  triggerOffset?: number;
+  dt?: number;
+}

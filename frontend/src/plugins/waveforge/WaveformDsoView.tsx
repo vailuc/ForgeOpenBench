@@ -11,8 +11,16 @@ import { MathPanel } from "./MathPanel";
 import { MeasurementBar } from "./MeasurementBar";
 import { MeasurementsPanel } from "./MeasurementsPanel";
 import { CursorsPanel } from "./CursorsPanel";
-import type { Measurements, VerticalState, HorizontalState, TriggerState, MathState, MeasurementKey } from "./scopeTypes";
+import type { Measurements, VerticalState, HorizontalState, TriggerState, MathState, MeasurementKey, TraceSnapshot } from "./scopeTypes";
 import { SAMPLE_RATES_DSO, VDIV_STEPS, SDIV_STEPS, formatSDiv, vDivToVpp, sDivToWindowMs } from "./scopeConstants";
+import { calcMeasurements, autoset } from "./waveformMath";
+import {
+  makeDrawTriggerLine, makeDrawPhosphor, makeDrawReference,
+  makeDrawCursors, makeDrawZoomBox,
+} from "./canvasOverlays";
+import { renderNow } from "./renderEngine";
+import { handleAcquireMode } from "./acquireModes";
+import { timeAxisValues, freqAxisValues, makeVoltAxisValues } from "./axisFormatters";
 
 /* ── Props ─────────────────────────────────────────────────────────── */
 interface Props {
@@ -22,182 +30,6 @@ interface Props {
   resetting?: boolean;
 }
 
-/* ── Enhanced measurement helpers ──────────────────────────────────── */
-function calcMeasurements(buf: number[], rate: number): Measurements {
-  if (buf.length < 2) {
-    return {
-      vpp: 0, dc: 0, vrms: 0, freq: 0, period: 0,
-      riseTime: 0, fallTime: 0, dutyCycle: 0,
-      positiveWidth: 0, negativeWidth: 0,
-    };
-  }
-
-  let min = buf[0], max = buf[0], sum = 0, sumSq = 0;
-  for (const v of buf) {
-    if (v < min) min = v;
-    if (v > max) max = v;
-    sum += v;
-    sumSq += v * v;
-  }
-  const dc = sum / buf.length;
-  const vpp = max - min;
-
-  // Zero-crossing frequency
-  let crossings = 0;
-  for (let i = 1; i < buf.length; i++) {
-    if ((buf[i-1] <= dc && buf[i] > dc) || (buf[i-1] >= dc && buf[i] < dc)) crossings++;
-  }
-  const period = crossings > 0 ? (buf.length / rate) / (crossings / 2) : 0;
-  const freq = period > 0 ? 1 / period : 0;
-
-  // Duty cycle + pulse widths using 50% threshold
-  const threshold = (min + max) / 2;
-  let posTime = 0, negTime = 0;
-  for (let i = 1; i < buf.length; i++) {
-    const dt = 1 / rate;
-    if (buf[i] > threshold) posTime += dt;
-    else negTime += dt;
-  }
-  const totalTime = posTime + negTime;
-  const dutyCycle = totalTime > 0 ? (posTime / totalTime) * 100 : 0;
-  const positiveWidth = freq > 0 ? dutyCycle / 100 * period : 0;
-  const negativeWidth = freq > 0 ? (1 - dutyCycle / 100) * period : 0;
-
-  // Rise/fall time: 10% → 90% and 90% → 10% of first crossing
-  const low = min + vpp * 0.1;
-  const high = min + vpp * 0.9;
-  let riseTime = 0, fallTime = 0;
-  let inRise = false, inFall = false;
-  let riseStart = 0, fallStart = 0;
-
-  for (let i = 0; i < buf.length; i++) {
-    if (!inRise && buf[i] <= low && i + 1 < buf.length && buf[i + 1] > low) {
-      inRise = true; riseStart = i;
-    }
-    if (inRise && buf[i] >= high) {
-      riseTime = (i - riseStart) / rate;
-      inRise = false;
-    }
-    if (!inFall && buf[i] >= high && i + 1 < buf.length && buf[i + 1] < high) {
-      inFall = true; fallStart = i;
-    }
-    if (inFall && buf[i] <= low) {
-      fallTime = (i - fallStart) / rate;
-      inFall = false;
-    }
-  }
-
-  return {
-    vpp, dc, vrms: Math.sqrt(sumSq / buf.length),
-    freq, period, riseTime, fallTime, dutyCycle,
-    positiveWidth, negativeWidth,
-  };
-}
-
-/* ── Autoset: compute ideal V/div, s/div, trigger level ───────────── */
-function signalVariance(buf: number[]): number {
-  if (buf.length < 10) return 0;
-  const mean = buf.reduce((a, b) => a + b, 0) / buf.length;
-  return Math.sqrt(buf.reduce((a, b) => a + (b - mean) ** 2, 0) / buf.length);
-}
-function findNearestStep(target: number, steps: number[]): number {
-  if (steps.length === 0) return target;
-  let best = steps[0];
-  let bestDiff = Math.abs(Math.log10(target) - Math.log10(steps[0]));
-  for (const s of steps) {
-    const diff = Math.abs(Math.log10(target) - Math.log10(s));
-    if (diff < bestDiff) { bestDiff = diff; best = s; }
-  }
-  return best;
-}
-function autoset(
-  ch1Buf: number[], ch2Buf: number[], rate: number,
-  vDivSteps: number[], sDivSteps: number[]
-) {
-  // Detect which channel has a real signal (variance above noise floor)
-  const ch1Var = signalVariance(ch1Buf);
-  const ch2Var = signalVariance(ch2Buf);
-  const NOISE_FLOOR = 0.01; // 10mV
-  const hasCh1 = ch1Buf.length >= 10 && ch1Var > NOISE_FLOOR;
-  const hasCh2 = ch2Buf.length >= 10 && ch2Var > NOISE_FLOOR;
-  const useCh1 = hasCh1 || (!hasCh2 && ch1Buf.length > ch2Buf.length);
-  const buf = useCh1 ? ch1Buf : ch2Buf;
-  if (buf.length < 10) return null;
-
-  const vpp = Math.max(...buf) - Math.min(...buf);
-  const targetVDiv = vpp / 5; // ~5 divisions of signal
-  const vDiv = findNearestStep(Math.max(targetVDiv, vDivSteps[0]), vDivSteps);
-
-  const m = calcMeasurements(buf, rate);
-  const period = m.period || 0.001;
-  const targetSDiv = period / 3; // ~3 periods across screen
-  const sDiv = findNearestStep(Math.max(targetSDiv, sDivSteps[0]), sDivSteps);
-
-  const triggerLevel = (Math.max(...buf) + Math.min(...buf)) / 2;
-
-  return {
-    vDiv,
-    sDiv,
-    triggerLevel,
-    source: useCh1 ? "ch1" : "ch2" as "ch1" | "ch2",
-    ch1HasSignal: hasCh1,
-    ch2HasSignal: hasCh2,
-  };
-}
-
-/* ── FFT helper (radix-2 Cooley-Tukey) ─────────────────────────────── */
-function fft(buf: number[]): { real: number[]; imag: number[] } {
-  const n = buf.length;
-  if (n === 0) return { real: [], imag: [] };
-  // Pad to next power of 2
-  const N = 1 << Math.ceil(Math.log2(n));
-  const real = new Array(N).fill(0);
-  const imag = new Array(N).fill(0);
-  for (let i = 0; i < n; i++) real[i] = buf[i];
-  // Bit-reversal permutation
-  for (let i = 0, j = 0; i < N; i++) {
-    if (i < j) { [real[i], real[j]] = [real[j], real[i]]; }
-    let k = N >> 1;
-    while (k & j) { j &= ~k; k >>= 1; }
-    j |= k;
-  }
-  // Butterfly
-  for (let len = 2; len <= N; len <<= 1) {
-    const half = len >> 1;
-    const wStepReal = Math.cos(-Math.PI / half);
-    const wStepImag = Math.sin(-Math.PI / half);
-    for (let i = 0; i < N; i += len) {
-      let wReal = 1, wImag = 0;
-      for (let j = 0; j < half; j++) {
-        const uReal = real[i + j];
-        const uImag = imag[i + j];
-        const vReal = real[i + j + half] * wReal - imag[i + j + half] * wImag;
-        const vImag = real[i + j + half] * wImag + imag[i + j + half] * wReal;
-        real[i + j] = uReal + vReal;
-        imag[i + j] = uImag + vImag;
-        real[i + j + half] = uReal - vReal;
-        imag[i + j + half] = uImag - vImag;
-        const nextWReal = wReal * wStepReal - wImag * wStepImag;
-        wImag = wReal * wStepImag + wImag * wStepReal;
-        wReal = nextWReal;
-      }
-    }
-  }
-  return { real, imag };
-}
-
-function fftMagnitude(buf: number[], sampleRate: number): { freqs: number[]; mags: number[] } {
-  const { real, imag } = fft(buf);
-  const N = real.length;
-  const half = Math.floor(N / 2);
-  const freqs: number[] = [];
-  const mags: number[] = [];
-  for (let i = 0; i < half; i++) {
-    freqs.push(i * sampleRate / N);
-    mags.push(Math.sqrt(real[i] * real[i] + imag[i] * imag[i]) / N);
-  }
-  return { freqs, mags };
-}
 
 // Session-persisted state — survives F5, resets on new tab / hard refresh
 const SCOPE_STATE_KEY = "waveforge:scopeState";
@@ -306,16 +138,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
   const phosphorEnabledRef = useRef(phosphorEnabled);
   useEffect(() => { phosphorEnabledRef.current = phosphorEnabled; }, [phosphorEnabled]);
   // Trace-echo phosphor: ring buffer of recent aligned traces
-  type TraceSnapshot = {
-    mode: "time" | "xy";
-    xs?: Float64Array;
-    ys1: Float64Array;
-    ys2: Float64Array;
-    triggerOffset?: number; // index of trigger within ys arrays (time mode)
-    dt?: number;            // seconds per sample (time mode)
-  };
   const phosphorTraces = useRef<TraceSnapshot[]>([]);
-  const MAX_PHOSPHOR_TRACES = 8; // ~0.4s at 50ms throttle
   const forceTriggerRef = useRef<(() => void) | null>(null);
   // Rolling-mode smart lock: auto-capture stable triggered frame
   const rollingTriggerTimes = useRef<number[]>([]);
@@ -462,264 +285,24 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
 
     const mode = viewMode;
 
-    // Axis formatters
-    const timeAxisValues = (_u: uPlot, splits: number[]): string[] => {
-      const maxVal = Math.max(...splits.map(Math.abs));
-      if (maxVal < 1e-6) return splits.map(v => `${(v * 1e9).toFixed(0)}ns`);
-      if (maxVal < 1e-3) return splits.map(v => `${(v * 1e6).toFixed(1)}µs`);
-      if (maxVal < 1)    return splits.map(v => `${(v * 1e3).toFixed(0)}ms`);
-      return splits.map(v => `${v.toFixed(2)}s`);
-    };
-    const freqAxisValues = (_u: uPlot, splits: number[]): string[] => {
-      const maxVal = Math.max(...splits);
-      if (maxVal >= 1e6) return splits.map(v => `${(v / 1e6).toFixed(1)}MHz`);
-      if (maxVal >= 1e3) return splits.map(v => `${(v / 1e3).toFixed(1)}kHz`);
-      return splits.map(v => `${v.toFixed(0)}Hz`);
-    };
-    const useMV = vpp < 2;
-    const voltAxisValues = (_u: uPlot, splits: number[]): string[] => {
-      if (useMV) return splits.map(v => `${(v * 1e3).toFixed(0)}mV`);
-      return splits.map(v => `${v.toFixed(2)}V`);
-    };
+    const voltAxisValues = makeVoltAxisValues(vpp);
 
-    // Draw trigger level line (time mode only)
-    const drawTriggerLine = (u: uPlot) => {
-      if (mode !== "time") return;
-      const level = triggerRef.current.level;
-      const posOff = (triggerRef.current.source === "ch2"
-        ? ch2Vertical.position * ch2Vertical.vDiv
-        : ch1Vertical.position * ch1Vertical.vDiv);
-      const ctx = u.ctx;
-      const plotTop = u.bbox.top;
-      const plotH = u.bbox.height;
-      const plotLeft = u.bbox.left;
-      const plotRight = plotLeft + u.bbox.width;
-      // Match the y-axis range used in the plot config
-      const yRange = ch1Vertical.vDiv * 10;
-      const vmin = -yRange / 2 + posOff;
-      const vmax = yRange / 2 + posOff;
-      const yScale = plotH / (vmax - vmin);
-      const yOfs = plotTop + plotH;
-      const y = yOfs - (level - vmin) * yScale;
-      ctx.save();
-      ctx.strokeStyle = "#FF00FF";
-      ctx.lineWidth = 2;
-      ctx.setLineDash([6, 4]);
-      ctx.beginPath();
-      ctx.moveTo(plotLeft, y);
-      ctx.lineTo(plotRight, y);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.fillStyle = "#FF00FF";
-      ctx.font = "10px monospace";
-      ctx.fillText(`${level.toFixed(2)}V`, plotRight - 45, y - 4);
-      ctx.restore();
-    };
-
-    // Digital phosphor draw hook — trace echo: draw fading copies of past traces
-    const drawPhosphor = (u: uPlot) => {
-      const t0 = performance.now();
-      const ctx = u.ctx;
-      const traces = phosphorTraces.current;
-      // Phosphor traces
-      if (phosphorEnabledRef.current && traces.length > 0) {
-        const n = traces.length;
-        // Skip the newest trace — uPlot already drew it at full opacity.
-        for (let t = 0; t < n - 1; t++) {
-        const snap = traces[t];
-        const age = n - 1 - t; // 1 = oldest in buffer
-        const opacity = Math.max(0, 1 - age / MAX_PHOSPHOR_TRACES) * 0.35;
-        if (opacity <= 0) continue;
-        const len = snap.ys1.length;
-        // Decimate ghost traces for performance: at most ~2000 pts per trace
-        const drawStep = Math.max(1, Math.floor(len / 2000));
-        // Time mode: align all traces by their trigger point.
-        // Compute x relative to the current plot's trigger screen position.
-        let xFor: (i: number) => number | null;
-        if (snap.mode === "time") {
-          const xMin = u.scales.x.min ?? 0;
-          const xMax = u.scales.x.max ?? 0;
-          const triggerX = xMin + (xMax - xMin) * 0.25; // trigger at 25% from left
-          const toff = snap.triggerOffset ?? 0;
-          const sdt = snap.dt ?? 1e-6;
-          xFor = (i: number) => u.valToPos(triggerX + (i - toff) * sdt, "x", true);
-        } else {
-          // XY mode: each snapshot carries its own x-values (CH1 voltage)
-          if (!snap.xs) continue;
-          xFor = (i: number) => u.valToPos(snap.xs[i], "x", true);
-        }
-        // CH1 echo — darker amber shadow
-        ctx.beginPath();
-        ctx.strokeStyle = `rgba(160,90,20,${opacity})`;
-        ctx.lineWidth = 1;
-        let first = true;
-        for (let i = 0; i < len; i += drawStep) {
-          const x = xFor(i);
-          const y = u.valToPos(snap.ys1[i], "y", true);
-          if (x == null || y == null) continue;
-          if (first) { ctx.moveTo(x, y); first = false; }
-          else { ctx.lineTo(x, y); }
-        }
-        ctx.stroke();
-        // CH2 echo — darker navy shadow
-        ctx.beginPath();
-        ctx.strokeStyle = `rgba(30,60,140,${opacity})`;
-        ctx.lineWidth = 1;
-        first = true;
-        for (let i = 0; i < len; i += drawStep) {
-          const x = xFor(i);
-          const y = u.valToPos(snap.ys2[i], "y", true);
-          if (x == null || y == null) continue;
-          if (first) { ctx.moveTo(x, y); first = false; }
-          else { ctx.lineTo(x, y); }
-        }
-        ctx.stroke();
-        }
-      }
-      // Rolling-mode smart lock: draw captured stable trace as bright overlay
-      const lockSnap = rollingLockedSnap.current;
-      if (lockSnap && lockSnap.mode === "time" && lockSnap.xs) {
-        const lastTrigger = rollingTriggerTimes.current[rollingTriggerTimes.current.length - 1];
-        const age = performance.now() - (lastTrigger ?? 0);
-        if (age < 3000) {
-          const xForLock = (i: number) => u.valToPos(lockSnap.xs![i], "x", true);
-          // CH1 locked trace — bright amber
-          ctx.beginPath();
-          ctx.strokeStyle = "rgba(245, 158, 11, 0.85)";
-          ctx.lineWidth = 1.5;
-          let first = true;
-          for (let i = 0; i < lockSnap.ys1.length; i++) {
-            const x = xForLock(i);
-            const y = u.valToPos(lockSnap.ys1[i], "y", true);
-            if (x == null || y == null) continue;
-            if (first) { ctx.moveTo(x, y); first = false; }
-            else { ctx.lineTo(x, y); }
-          }
-          ctx.stroke();
-          // CH2 locked trace — bright blue
-          ctx.beginPath();
-          ctx.strokeStyle = "rgba(96, 165, 250, 0.85)";
-          ctx.lineWidth = 1.5;
-          first = true;
-          for (let i = 0; i < lockSnap.ys2.length; i++) {
-            const x = xForLock(i);
-            const y = u.valToPos(lockSnap.ys2[i], "y", true);
-            if (x == null || y == null) continue;
-            if (first) { ctx.moveTo(x, y); first = false; }
-            else { ctx.lineTo(x, y); }
-          }
-          ctx.stroke();
-        }
-      }
-      const elapsed = performance.now() - t0;
-      if (elapsed > 50) {
-        // eslint-disable-next-line no-console
-        console.log(`[DSO] drawPhosphor slow: ${elapsed.toFixed(1)}ms (${traces.length} traces)`);
-      }
-    };
-
-    // Reference waveform draw — dim snapshot behind current trace
-    const drawReference = (u: uPlot) => {
-      const snap = referenceSnapRef.current;
-      if (!snap || snap.mode !== "time" || !snap.xs) return;
-      const ctx = u.ctx;
-      const len = snap.ys1.length;
-      if (len < 2) return;
-      const drawStep = Math.max(1, Math.floor(len / 2000));
-      ctx.save();
-      // CH1 reference — dim amber
-      ctx.beginPath();
-      ctx.strokeStyle = "rgba(245, 158, 11, 0.25)";
-      ctx.lineWidth = 1;
-      let first = true;
-      for (let i = 0; i < len; i += drawStep) {
-        const x = u.valToPos(snap.xs[i], "x", true);
-        const y = u.valToPos(snap.ys1[i], "y", true);
-        if (x == null || y == null) continue;
-        if (first) { ctx.moveTo(x, y); first = false; }
-        else { ctx.lineTo(x, y); }
-      }
-      ctx.stroke();
-      // CH2 reference — dim blue
-      ctx.beginPath();
-      ctx.strokeStyle = "rgba(96, 165, 250, 0.25)";
-      ctx.lineWidth = 1;
-      first = true;
-      for (let i = 0; i < len; i += drawStep) {
-        const x = u.valToPos(snap.xs[i], "x", true);
-        const y = u.valToPos(snap.ys2[i], "y", true);
-        if (x == null || y == null) continue;
-        if (first) { ctx.moveTo(x, y); first = false; }
-        else { ctx.lineTo(x, y); }
-      }
-      ctx.stroke();
-      ctx.restore();
-    };
-
-    // Cursor draw — crosshairs on top of everything
-    const drawCursors = (u: uPlot) => {
-      const a = cursorARef.current;
-      const b = cursorBRef.current;
-      if (!a && !b) return;
-      const ctx = u.ctx;
-      const plotLeft = u.bbox.left;
-      const plotRight = plotLeft + u.bbox.width;
-      const plotTop = u.bbox.top;
-      const plotBottom = plotTop + u.bbox.height;
-      ctx.save();
-      ctx.lineWidth = 1;
-      ctx.setLineDash([4, 4]);
-      // Cursor A — gold
-      if (a) {
-        const x = u.valToPos(a.t, "x", true);
-        const y = u.valToPos(a.v, "y", true);
-        if (x != null) {
-          ctx.strokeStyle = "#FFD700";
-          ctx.beginPath();
-          ctx.moveTo(x, plotTop);
-          ctx.lineTo(x, plotBottom);
-          ctx.stroke();
-        }
-        if (y != null) {
-          ctx.strokeStyle = "#FFD700";
-          ctx.beginPath();
-          ctx.moveTo(plotLeft, y);
-          ctx.lineTo(plotRight, y);
-          ctx.stroke();
-        }
-        if (x != null && y != null) {
-          ctx.fillStyle = "#FFD700";
-          ctx.font = "10px monospace";
-          ctx.fillText("A", x + 2, y - 4);
-        }
-      }
-      // Cursor B — cyan
-      if (b) {
-        const x = u.valToPos(b.t, "x", true);
-        const y = u.valToPos(b.v, "y", true);
-        if (x != null) {
-          ctx.strokeStyle = "#00FFFF";
-          ctx.beginPath();
-          ctx.moveTo(x, plotTop);
-          ctx.lineTo(x, plotBottom);
-          ctx.stroke();
-        }
-        if (y != null) {
-          ctx.strokeStyle = "#00FFFF";
-          ctx.beginPath();
-          ctx.moveTo(plotLeft, y);
-          ctx.lineTo(plotRight, y);
-          ctx.stroke();
-        }
-        if (x != null && y != null) {
-          ctx.fillStyle = "#00FFFF";
-          ctx.font = "10px monospace";
-          ctx.fillText("B", x + 2, y - 4);
-        }
-      }
-      ctx.setLineDash([]);
-      ctx.restore();
-    };
+    // Canvas overlay hooks (factory functions capture latest refs)
+    const drawTriggerLine = makeDrawTriggerLine({
+      getLevel: () => triggerRef.current.level,
+      getSource: () => triggerRef.current.source,
+      getVdiv: () => ch1Vertical.vDiv,
+      getPos: (src) => (src === "ch2" ? ch2Vertical.position : ch1Vertical.position),
+      viewMode: mode,
+    });
+    const drawPhosphor = makeDrawPhosphor({
+      tracesRef: phosphorTraces,
+      enabledRef: phosphorEnabledRef,
+      rollingTriggerTimesRef: rollingTriggerTimes,
+      rollingLockedSnapRef: rollingLockedSnap,
+    });
+    const drawReference = makeDrawReference({ snapRef: referenceSnapRef });
+    const drawCursors = makeDrawCursors({ cursorARef, cursorBRef });
 
     let opts: uPlot.Options;
 
@@ -747,8 +330,8 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
         padding: [0, 0, 0, 0],
         scales: { x: { auto: true }, y: { auto: true } },
         axes: [
-          { stroke: "#666688", grid: { stroke: "#1A1A2E" }, label: useMV ? "mV" : "V", values: voltAxisValues },
-          { stroke: "#666688", grid: { stroke: "#1A1A2E" }, label: useMV ? "mV" : "V", values: voltAxisValues },
+          { stroke: "#666688", grid: { stroke: "#1A1A2E" }, label: vpp < 2 ? "mV" : "V", values: voltAxisValues },
+          { stroke: "#666688", grid: { stroke: "#1A1A2E" }, label: vpp < 2 ? "mV" : "V", values: voltAxisValues },
         ],
         series: [
           {},
@@ -766,7 +349,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
         scales: { x: { time: false } },
         axes: [
           { stroke: "#666688", grid: { stroke: "#1A1A2E" }, values: timeAxisValues },
-          { stroke: "#666688", grid: { stroke: "#1A1A2E" }, label: useMV ? "mV" : "V", values: voltAxisValues },
+          { stroke: "#666688", grid: { stroke: "#1A1A2E" }, label: vpp < 2 ? "mV" : "V", values: voltAxisValues },
         ],
         series: [
           {},
@@ -795,25 +378,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       if (overviewContainer) {
         const oW = overviewContainer.offsetWidth || W;
         const oH = overviewContainer.offsetHeight || 80;
-        const drawZoomBox = (u: uPlot) => {
-          const main = plotRef.current;
-          if (!main) return;
-          const xMin = main.scales.x.min ?? 0;
-          const xMax = main.scales.x.max ?? 0;
-          const left = u.valToPos(xMin, 'x', true);
-          const right = u.valToPos(xMax, 'x', true);
-          if (left == null || right == null) return;
-          const plotTop = u.bbox.top;
-          const plotBottom = plotTop + u.bbox.height;
-          const ctx = u.ctx;
-          ctx.save();
-          ctx.fillStyle = 'rgba(245, 158, 11, 0.15)';
-          ctx.fillRect(left, plotTop, right - left, plotBottom - plotTop);
-          ctx.strokeStyle = 'rgba(245, 158, 11, 0.6)';
-          ctx.lineWidth = 1;
-          ctx.strokeRect(left, plotTop, right - left, plotBottom - plotTop);
-          ctx.restore();
-        };
+        const drawZoomBox = makeDrawZoomBox(plotRef);
         const oOpts: uPlot.Options = {
           width: oW, height: oH,
           padding: [0, 0, 0, 0],
@@ -1123,359 +688,44 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
     }
 
     // Trigger detection helper — returns crossing index or -1
-    const findTriggerIndex = (buf: number[]): number => {
-      if (buf.length < 100) return -1;
-      const level = triggerRef.current.level;
-      const slope = triggerRef.current.slope;
-      const sr = sampleRateRef.current || 4_000_000;
-      const windowSamples = Math.max(500, Math.ceil(sr * 0.001)); // ~1ms worth of samples
-      const checkStart = Math.max(0, buf.length - windowSamples);
-      for (let i = checkStart + 1; i < buf.length; i++) {
-        const prev = buf[i - 1], curr = buf[i];
-        if (slope === "rise" && prev <= level && curr > level) return i;
-        if (slope === "fall" && prev >= level && curr < level) return i;
-        if (slope === "both" && ((prev <= level && curr > level) || (prev >= level && curr < level))) return i;
-      }
-      return -1;
+    const renderCtx = {
+      plotRef, overviewPlotRef,
+      viewMode: viewMode as "time" | "fft" | "xy",
+      sampleRateRef, mathRef, phosphorEnabledRef,
+      horizontalRef, triggerRef,
+      ch1VerticalRef, ch2VerticalRef, windowMs,
+      phosphorTracesRef: phosphorTraces, plotThrottleRef, forceTriggerRef,
+      chunkTimesRef: chunkTimes, renderCountRef: renderCount,
+      renderRateT0Ref: renderRateT0,
     };
-    const detectTrigger = (buf: number[]): boolean => findTriggerIndex(buf) >= 0;
-
-    // Render helper — mode-aware: time / fft / xy
-    const renderNow = (ch1: number[], ch2: number[], opts?: { phosphorOnly?: boolean }) => {
-      forceTriggerRef.current = () => renderNow(ch1Buf.current, ch2Buf.current);
-      plotThrottleRef.current = nowPerf;
-      const plot = plotRef.current;
-      if (!plot) return;
-      const renderT0 = performance.now();
-      // Log end-to-end latency: time from most recent chunk arrival to render start
-      const lastChunkT = chunkTimes.current.length > 0 ? chunkTimes.current[chunkTimes.current.length - 1] : renderT0;
-      const e2eLatency = renderT0 - lastChunkT;
-      const n = ch1.length;
-      const width = plot.width ?? 1000;
-      const target = Math.max(1000, width * 2);
-      const vm = viewMode;
-
-      if (vm === "fft") {
-        const src = mathRef.current.sourceA === "ch2" ? ch2 : ch1;
-        if (src.length < 16) return;
-        const { freqs, mags } = fftMagnitude(src, sampleRateRef.current);
-        const fn = freqs.length;
-        const fArr = new Float64Array(fn);
-        const mArr = new Float64Array(fn);
-        for (let i = 0; i < fn; i++) { fArr[i] = freqs[i]; mArr[i] = mags[i]; }
-        plot.setData([fArr, mArr, new Float64Array(fn), new Float64Array(fn)]);
-        return;
-      }
-
-      if (vm === "xy") {
-        const a = mathRef.current.sourceA === "ch2" ? ch2 : ch1;
-        const b = mathRef.current.sourceB === "ch2" ? ch2 : ch1;
-        const len = Math.min(a.length, b.length);
-        if (len < 2) return;
-        const xs = new Float64Array(len);
-        const ys = new Float64Array(len);
-        for (let i = 0; i < len; i++) { xs[i] = a[i]; ys[i] = b[i]; }
-        plot.setData([xs, ys, new Float64Array(len), new Float64Array(len)]);
-        // Phosphor for XY: store as trace snapshots (x=chA, y=chB)
-        if (phosphorEnabledRef.current) {
-          const snap: TraceSnapshot = {
-            mode: "xy",
-            xs: new Float64Array(a.slice(0, len)),
-            ys1: new Float64Array(b.slice(0, len)),
-            ys2: new Float64Array(len), // unused in XY
-          };
-          phosphorTraces.current.push(snap);
-          if (phosphorTraces.current.length > MAX_PHOSPHOR_TRACES) {
-            phosphorTraces.current.shift();
-          }
-        }
-        return;
-      }
-
-      // time mode (with optional peak detect decimation)
-      const isPeak = horizontalRef.current.acquireMode === "peak";
-      let r1 = ch1, r2 = ch2;
-      if (isPeak && n > target) {
-        const step = Math.floor(n / target);
-        r1 = []; r2 = [];
-        for (let i = 0; i < n; i += step) {
-          const end = Math.min(i + step, n);
-          let min1 = ch1[i], max1 = ch1[i];
-          let min2 = ch2[i], max2 = ch2[i];
-          for (let j = i + 1; j < end; j++) {
-            if (ch1[j] < min1) min1 = ch1[j]; if (ch1[j] > max1) max1 = ch1[j];
-            if (ch2[j] < min2) min2 = ch2[j]; if (ch2[j] > max2) max2 = ch2[j];
-          }
-          r1.push(min1, max1); r2.push(min2, max2);
-        }
-      }
-      const rn = r1.length;
-
-      const doMath = mathRef.current.enabled && mathRef.current.op !== "fft" && mathRef.current.op !== "xy";
-      if (doMath) {
-        const a = mathRef.current.sourceA === "ch2" ? r2 : r1;
-        const b = mathRef.current.sourceB === "ch2" ? r2 : r1;
-        mathBuf.current = new Array(rn).fill(0);
-        for (let i = 0; i < rn; i++) {
-          const av = a[i] ?? 0, bv = b[i] ?? 0;
-          const op = mathRef.current.op;
-          if (op === "add") mathBuf.current[i] = av + bv;
-          else if (op === "sub") mathBuf.current[i] = av - bv;
-          else if (op === "mul") mathBuf.current[i] = av * bv;
-          else if (op === "div") mathBuf.current[i] = bv !== 0 ? av / bv : 0;
-        }
-      }
-      const mathArr = doMath ? mathBuf.current : new Array(rn).fill(0);
-
-      // Trigger alignment: find trigger in source buffer and center window
-      const tSrc = triggerRef.current.source === "ch2" ? r2 : r1;
-      const tIdx = findTriggerIndex(tSrc);
-      const sr = sampleRateRef.current || 4_000_000;
-      const windowSamples = Math.max(100, Math.ceil(windowMs / 1000 * sr));
-      const alignTrigger = tIdx >= 0 && rn > windowSamples;
-      let s1 = r1, s2 = r2, sM = mathArr;
-      let startIdx = 0;
-      if (alignTrigger) {
-        const preTrigger = Math.floor(windowSamples * 0.25); // trigger at 25% from left
-        const postTrigger = windowSamples - preTrigger;
-        startIdx = Math.max(0, tIdx - preTrigger);
-        const endIdx = Math.min(rn, tIdx + postTrigger);
-        s1 = r1.slice(startIdx, endIdx);
-        s2 = r2.slice(startIdx, endIdx);
-        sM = mathArr.slice(startIdx, endIdx);
-      }
-      const sn = s1.length;
-
-      // Phosphor: capture aligned trace snapshot (trigger-aligned)
-      if (phosphorEnabledRef.current && sn > 0) {
-        // Use the trigger that was already found for alignment (tIdx in full buffer).
-        // In the sliced array s1, the trigger offset is tIdx - startIdx.
-        // Do NOT re-detect — findTriggerIndex(s1) may find an earlier crossing
-        // in the pre-trigger region, causing misaligned ghosts.
-        const snap: TraceSnapshot = {
-          mode: "time",
-          ys1: new Float64Array(s1),
-          ys2: new Float64Array(s2),
-          triggerOffset: alignTrigger ? Math.max(0, tIdx - startIdx) : Math.floor(sn * 0.25),
-          dt,
-        };
-        phosphorTraces.current.push(snap);
-        if (phosphorTraces.current.length > MAX_PHOSPHOR_TRACES) {
-          phosphorTraces.current.shift();
-        }
-      }
-
-      if (opts?.phosphorOnly) {
-        plot.redraw(false, false);
-        return;
-      }
-
-      // Render aligned or full
-      const doDecimate = sn > target && !isPeak;
-      const step = doDecimate ? Math.floor(sn / target) : 1;
-      const m = doDecimate ? Math.ceil(sn / step) : sn;
-      let xs: Float64Array, ys1Arr: Float64Array, ys2Arr: Float64Array, ysMArr: Float64Array;
-      if (!doDecimate) {
-        xs = Float64Array.from({ length: sn }, (_, i) => (startIdx + i) * dt);
-        ys1Arr = new Float64Array(s1); ys2Arr = new Float64Array(s2); ysMArr = new Float64Array(sM);
-        plot.setData([xs, ys1Arr, ys2Arr, ysMArr]);
-      } else {
-        xs = new Float64Array(m); ys1Arr = new Float64Array(m); ys2Arr = new Float64Array(m); ysMArr = new Float64Array(m);
-        for (let i = 0, j = 0; i < sn; i += step, j++) {
-          xs[j] = (startIdx + i) * dt; ys1Arr[j] = s1[i]; ys2Arr[j] = s2[i]; ysMArr[j] = sM[i];
-        }
-        plot.setData([xs, ys1Arr, ys2Arr, ysMArr]);
-      }
-      // Overview gets full data (no decimation)
-      const ov = overviewPlotRef.current;
-      if (ov) {
-        const xsOv = Float64Array.from({ length: rn }, (_, i) => (startIdx + i) * dt);
-        ov.setData([xsOv, new Float64Array(r1), new Float64Array(r2), new Float64Array(mathArr)]);
-      }
-      // Force scale during active acquisition; allow manual zoom/pan when stopped
-      const amode = acquireModeRef.current;
-      const isAcquiring = amode === "running" || amode === "rolling" || amode === "single-armed" || amode === "averaging";
-      if (isAcquiring) {
-        const dataMax = sn > 0 ? (startIdx + (m - 1) * step) * dt : 0;
-        const delay = (horizontalRef.current.position / 100) * dataMax;
-        const posOffset = (triggerRef.current.source === "ch2"
-          ? ch2VerticalRef.current.position * ch2VerticalRef.current.vDiv
-          : ch1VerticalRef.current.position * ch1VerticalRef.current.vDiv);
-        const yRange = ch1VerticalRef.current.vDiv * 10;
-        const yMin = -yRange / 2 + posOffset;
-        const yMax = yRange / 2 + posOffset;
-        plot.setScale('x', { min: delay, max: dataMax + delay });
-        plot.setScale('y', { min: yMin, max: yMax });
-      }
-      // Render-rate diagnostics
-      renderCount.current++;
-      const rrNow = performance.now();
-      if (renderRateT0.current === 0) renderRateT0.current = rrNow;
-      if (rrNow - renderRateT0.current >= 1000) {
-        // eslint-disable-next-line no-console
-        console.log(`[DSO] render rate: ${renderCount.current}/s`);
-        renderCount.current = 0;
-        renderRateT0.current = rrNow;
-      }
-
-      const renderElapsed = performance.now() - renderT0;
-      if (renderElapsed > 100) {
-        // eslint-disable-next-line no-console
-        console.log(`[DSO] renderNow slow: ${renderElapsed.toFixed(1)}ms (sn=${sn}, doDecimate=${doDecimate})`);
-      }
-      if (e2eLatency > 200) {
-        // eslint-disable-next-line no-console
-        console.log(`[DSO] e2e latency: ${e2eLatency.toFixed(1)}ms (render=${renderElapsed.toFixed(1)}ms)`);
-      }
-    };
-
     const sourceBuf = triggerRef.current.source === "ch2" ? ch2Buf.current : ch1Buf.current;
 
-    if (mode === "single-armed") {
-      if (detectTrigger(sourceBuf)) {
-        setAcquireMode("single-held");
-        renderNow(ch1Buf.current, ch2Buf.current);
-        void stop(true);
-      }
-      return;
-    }
-
-    if (mode === "averaging") {
-      if (detectTrigger(sourceBuf)) {
-        const n = ch1Buf.current.length;
-        if (avgAccumCount.current === 0) {
-          avgBuf1.current = new Array(n).fill(0);
-          avgBuf2.current = new Array(n).fill(0);
-        }
-        for (let i = 0; i < n; i++) {
-          avgBuf1.current[i] += ch1Buf.current[i];
-          avgBuf2.current[i] += ch2Buf.current[i];
-        }
-        avgAccumCount.current++;
-        const targetCount = horizontalRef.current.averageCount;
-        if (avgAccumCount.current >= targetCount) {
-          const divisor = avgAccumCount.current;
-          const avg1 = avgBuf1.current.map(v => v / divisor);
-          const avg2 = avgBuf2.current.map(v => v / divisor);
-          renderNow(avg1, avg2);
-          avgAccumCount.current = 0;
-          avgBuf1.current = [];
-          avgBuf2.current = [];
-        }
-      }
-      return;
-    }
-
-    if (mode === "rolling") {
-      // ── Smart rolling lock: detect stable triggers and freeze a trace ──
-      const tIdx = findTriggerIndex(sourceBuf);
-      if (tIdx >= 0) {
-        rollingTriggerTimes.current.push(performance.now());
-        if (rollingTriggerTimes.current.length > 10) rollingTriggerTimes.current.shift();
-        // Check stability: ≥3 triggers with consistent intervals (variance < 30%)
-        const times = rollingTriggerTimes.current;
-        if (times.length >= 3) {
-          const intervals: number[] = [];
-          for (let i = 1; i < times.length; i++) intervals.push(times[i] - times[i - 1]);
-          const mean = intervals.reduce((a, b) => a + b, 0) / intervals.length;
-          const max = Math.max(...intervals);
-          const min = Math.min(...intervals);
-          if (mean > 0 && (max - min) / mean < 0.30) {
-            // Stable signal — capture trigger-aligned window from current buffers
-            const sr = sampleRateRef.current || 4_000_000;
-            const dt = 1 / sr;
-            const windowSamples = Math.max(100, Math.ceil(windowMs / 1000 * sr));
-            const preTrigger = Math.floor(windowSamples * 0.25);
-            const postTrigger = windowSamples - preTrigger;
-            const sIdx = Math.max(0, tIdx - preTrigger);
-            const eIdx = Math.min(ch1Buf.current.length, tIdx + postTrigger);
-            const s1 = ch1Buf.current.slice(sIdx, eIdx);
-            const s2 = ch2Buf.current.slice(sIdx, eIdx);
-            const xs = new Float64Array(s1.length);
-            for (let i = 0; i < s1.length; i++) xs[i] = (sIdx + i) * dt;
-            rollingLockedSnap.current = {
-              mode: "time",
-              xs,
-              ys1: new Float64Array(s1),
-              ys2: new Float64Array(s2),
-              triggerOffset: Math.max(0, tIdx - sIdx),
-              dt,
-            };
-          }
-        }
-      }
-      // Clear stale lock if no recent triggers
-      if (rollingTriggerTimes.current.length > 0) {
-        const lastTrigger = rollingTriggerTimes.current[rollingTriggerTimes.current.length - 1];
-        if (performance.now() - lastTrigger > 2000) {
-          rollingTriggerTimes.current = [];
-          rollingLockedSnap.current = null;
-        }
-      }
-      // Bypass trigger, render latest window continuously
-      if (nowPerf - plotThrottleRef.current > 33) {
-        renderNow(ch1Buf.current, ch2Buf.current);
-      } else if (nowPerf - plotThrottleRef.current > 500) {
-        // eslint-disable-next-line no-console
-        console.log(`[DSO] rolling render skipped: throttle=${(nowPerf - plotThrottleRef.current).toFixed(0)}ms`);
-      }
-      return;
-    }
-
-    // mode === "running"
-    if (nowPerf - plotThrottleRef.current > 33) {
-      const tmode = triggerRef.current.mode;
-      if (tmode === "auto") {
-        renderNow(ch1Buf.current, ch2Buf.current);
-        triggerArmedRef.current = true;
-      } else if (tmode === "normal") {
-        const triggered = detectTrigger(sourceBuf);
-        if (triggered && triggerArmedRef.current) {
-          renderNow(ch1Buf.current, ch2Buf.current);
-          triggerArmedRef.current = false;
-        }
-        // Re-arm when signal leaves trigger zone
-        if (!triggerArmedRef.current && sourceBuf.length > 0) {
-          const last = sourceBuf[sourceBuf.length - 1];
-          const level = triggerRef.current.level;
-          const slope = triggerRef.current.slope;
-          const margin = vpp * 0.05;
-          if (slope === "rise" && last < level - margin) triggerArmedRef.current = true;
-          if (slope === "fall" && last > level + margin) triggerArmedRef.current = true;
-          if (slope === "both" && (last < level - margin || last > level + margin)) triggerArmedRef.current = true;
-        }
-      } else if (tmode === "smart") {
-        const triggered = detectTrigger(sourceBuf);
-        if (smartStateRef.current === "auto") {
-          renderNow(ch1Buf.current, ch2Buf.current);
-          if (triggered) {
-            smartTriggerCountRef.current++;
-            if (smartTriggerCountRef.current > 6) { // ~300ms at 50ms throttle
-              smartStateRef.current = "locked";
-              smartMissCountRef.current = 0;
-              phosphorTraces.current = []; // clear free-run ghosts, start clean locked history
-            }
-          } else {
-            smartTriggerCountRef.current = 0;
-          }
-        } else {
-          // Locked: trace frozen, phosphor accumulates jitter as fading cloud
-          if (triggered) {
-            renderNow(ch1Buf.current, ch2Buf.current, { phosphorOnly: true });
-            smartMissCountRef.current = 0;
-          } else {
-            smartMissCountRef.current++;
-          }
-          // Revert to auto after ~500ms without trigger (10 evaluations at 50ms)
-          if (smartMissCountRef.current > 10) {
-            smartStateRef.current = "auto";
-            smartTriggerCountRef.current = 0;
-            smartMissCountRef.current = 0;
-            phosphorTraces.current = []; // clear stale ghosts on mode transition
-          }
-        }
-      }
-    }
+    handleAcquireMode({
+      mode,
+      sourceBuf,
+      ch1Buf: ch1Buf.current,
+      ch2Buf: ch2Buf.current,
+      nowPerf,
+      vpp,
+      windowMs,
+      triggerRef,
+      horizontalRef,
+      sampleRateRef,
+      plotThrottleRef,
+      triggerArmedRef,
+      smartStateRef,
+      smartTriggerCountRef,
+      smartMissCountRef,
+      rollingTriggerTimesRef: rollingTriggerTimes,
+      rollingLockedSnapRef: rollingLockedSnap,
+      avgAccumCountRef: avgAccumCount,
+      avgBuf1Ref: avgBuf1,
+      avgBuf2Ref: avgBuf2,
+      phosphorTracesRef: phosphorTraces,
+      renderNow: (c1, c2, opts) => renderNow(renderCtx, c1, c2, nowPerf, opts),
+      setAcquireMode,
+      stop,
+    });
   }, [vpp, windowMs]);
 
   // Start / stop
