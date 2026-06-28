@@ -21,6 +21,11 @@ import {
 import { renderNow } from "./renderEngine";
 import { handleAcquireMode } from "./acquireModes";
 import { timeAxisValues, freqAxisValues, makeVoltAxisValues } from "./axisFormatters";
+import {
+  notifyStarted, notifyStopped, notifySingle, notifyRolling, notifyAveraging,
+  notifyConnected, notifyDisconnected, notifyReferenceSaved, notifyReferenceCleared,
+  notifyAutoSetDone, notifyAutoSetFailed, notifyError,
+} from "./scopeToasts";
 
 /* ── Props ─────────────────────────────────────────────────────────── */
 interface Props {
@@ -67,7 +72,13 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
   const intentionalStopRef = useRef(false);
   const startRef = useRef<() => Promise<void>>(async () => {});
   const connectedRef = useRef(connected);
+  const wasConnectedRef = useRef(connected);
   useEffect(() => { connectedRef.current = connected; }, [connected]);
+  useEffect(() => {
+    if (connected && !wasConnectedRef.current) notifyConnected();
+    if (!connected && wasConnectedRef.current) notifyDisconnected();
+    wasConnectedRef.current = connected;
+  }, [connected]);
 
   // Average mode accumulation
   const avgAccumCount = useRef(0);
@@ -114,9 +125,9 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
     const mode = acquireModeRef.current;
     if (mode === "stopped" || mode === "single-held") return; // don't auto-start
     if (horizontal.rollMode) {
-      if (mode !== "rolling") setAcquireMode("rolling");
+      if (mode !== "rolling") { setAcquireMode("rolling"); notifyRolling(); }
     } else if (horizontal.acquireMode === "average") {
-      if (mode !== "averaging") setAcquireMode("averaging");
+      if (mode !== "averaging") { setAcquireMode("averaging"); notifyAveraging(); }
     } else {
       if (mode !== "running") setAcquireMode("running");
     }
@@ -240,6 +251,8 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
           if (e instanceof Error && e.message.includes("Not connected")) {
             intentionalStopRef.current = true;
           }
+          const msg = e instanceof Error ? e.message : String(e);
+          notifyError(`Sample rate change failed: ${msg}`);
           console.warn("[DSO] sample-rate restart failed", e);
         }
       })();
@@ -773,6 +786,8 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       if (e instanceof Error && e.message.includes("Not connected")) {
         intentionalStopRef.current = true;
       }
+      const msg = e instanceof Error ? e.message : String(e);
+      notifyError(`Start failed: ${msg}`);
       console.warn("[DSO] start error", e);
     }
   }, [connected, transport, pushData, vpp]);
@@ -832,9 +847,10 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
   }, [isActive, connected, stop]);
 
   // Toolbar handlers
-  const handleRun = () => { void start(); };
-  const handleStop = () => void stop(true);
+  const handleRun = () => { notifyStarted(); void start(); };
+  const handleStop = () => { notifyStopped(); void stop(true); };
   const handleSingle = () => {
+    notifySingle();
     setAcquireMode("single-armed");
     void start();
   };
@@ -854,6 +870,9 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       if (ch1Buf.current.length > 0) {
         forceTriggerRef.current?.();
       }
+      notifyAutoSetDone();
+    } else {
+      notifyAutoSetFailed();
     }
   };
   const handleForceTrigger = () => {
@@ -891,12 +910,14 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
     };
     setHasRef(true);
     plot.redraw(false, false);
+    notifyReferenceSaved();
   };
 
   const handleClearReference = () => {
     referenceSnapRef.current = null;
     setHasRef(false);
     plotRef.current?.redraw(false, false);
+    notifyReferenceCleared();
   };
 
   const rateLabel = SAMPLE_RATES_DSO.find(r => r.hz === sampleRate)?.label ?? `${sampleRate / 1e6}MS/s`;
