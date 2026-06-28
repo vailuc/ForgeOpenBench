@@ -55,3 +55,6 @@ Projects/*/waveforms/*.sr
 
 # Windsurf IDE artifacts
 .windsurf/
+
+# Planning docs — local working notes
+.devin/plans/
