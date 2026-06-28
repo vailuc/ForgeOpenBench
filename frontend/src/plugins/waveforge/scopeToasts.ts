@@ -59,6 +59,10 @@ export function notifyPresetsImported(count: number): void {
   toast.success(`${count} preset${count === 1 ? "" : "s"} imported`, NORMAL);
 }
 
+export function notifyPresetDeleted(name: string): void {
+  toast.info(`Preset deleted: ${name}`, SHORT);
+}
+
 export function notifyError(message: string): void {
   toast.error(message, NORMAL);
 }

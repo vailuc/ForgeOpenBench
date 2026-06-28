@@ -25,7 +25,7 @@ import {
   notifyStarted, notifyStopped, notifySingle, notifyRolling, notifyAveraging,
   notifyConnected, notifyDisconnected, notifyReferenceSaved, notifyReferenceCleared,
   notifyAutoSetDone, notifyAutoSetFailed, notifyPresetSaved, notifyPresetLoaded,
-  notifyPresetsImported, notifyError,
+  notifyPresetsImported, notifyPresetDeleted, notifyError,
 } from "./scopeToasts";
 import { loadPresets, savePresets, createPreset, uniquePresetName, exportPresets, importPresets } from "./scopePresets";
 
@@ -955,6 +955,15 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
     setSampleRate(preset.state.sampleRate);
   };
 
+  const handleDeletePreset = () => {
+    if (!selectedPreset) return;
+    const next = presets.filter(p => p.name !== selectedPreset);
+    setPresets(next);
+    savePresets(next);
+    notifyPresetDeleted(selectedPreset);
+    setSelectedPreset(null);
+  };
+
   const handleExportPresets = () => {
     const blob = new Blob([exportPresets(presets)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -973,8 +982,12 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
     }
     const next = [...presets];
     for (const p of imported) {
-      const finalName = uniquePresetName(next, p.name);
-      next.push({ ...p, name: finalName });
+      const idx = next.findIndex(existing => existing.name === p.name);
+      if (idx >= 0) {
+        next[idx] = p;
+      } else {
+        next.push(p);
+      }
     }
     setPresets(next);
     savePresets(next);
@@ -1008,6 +1021,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
         onSelectPreset={setSelectedPreset}
         onSavePreset={handleSavePreset}
         onLoadPreset={handleLoadPreset}
+        onDeletePreset={handleDeletePreset}
         onExportPresets={handleExportPresets}
         onImportPresets={handleImportPresets}
       />

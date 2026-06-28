@@ -22,6 +22,7 @@ interface Props {
   onSelectPreset: (name: string) => void;
   onSavePreset: () => void;
   onLoadPreset: () => void;
+  onDeletePreset: () => void;
   onExportPresets: () => void;
   onImportPresets: (json: string) => void;
 }
@@ -31,7 +32,7 @@ export function AcquireToolbar({
   triggerMode, onSetTriggerMode,
   onSaveRef, onClearRef, hasRef,
   sampleRateLabel, sDivLabel, connected,
-  presets, selectedPreset, onSelectPreset, onSavePreset, onLoadPreset,
+  presets, selectedPreset, onSelectPreset, onSavePreset, onLoadPreset, onDeletePreset,
   onExportPresets, onImportPresets,
 }: Props) {
   return (
@@ -138,6 +139,13 @@ export function AcquireToolbar({
           className="px-2 py-1 rounded bg-fob-surface border border-fob-border text-fob-text font-bold text-[11px] hover:bg-fob-border disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
           Load
+        </button>
+        <button
+          onClick={onDeletePreset}
+          disabled={!selectedPreset}
+          className="px-2 py-1 rounded bg-fob-surface border border-fob-border text-fob-red font-bold text-[11px] hover:bg-fob-border disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        >
+          Del
         </button>
         <button
           onClick={onExportPresets}
