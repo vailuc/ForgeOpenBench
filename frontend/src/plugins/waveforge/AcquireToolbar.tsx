@@ -1,3 +1,5 @@
+import type { ScopePreset } from "./scopeTypes";
+
 interface Props {
   running: boolean;
   paused: boolean;
@@ -15,6 +17,13 @@ interface Props {
   sampleRateLabel: string;
   sDivLabel: string;
   connected: boolean;
+  presets: ScopePreset[];
+  selectedPreset: string | null;
+  onSelectPreset: (name: string) => void;
+  onSavePreset: () => void;
+  onLoadPreset: () => void;
+  onExportPresets: () => void;
+  onImportPresets: (json: string) => void;
 }
 
 export function AcquireToolbar({
@@ -22,6 +31,8 @@ export function AcquireToolbar({
   triggerMode, onSetTriggerMode,
   onSaveRef, onClearRef, hasRef,
   sampleRateLabel, sDivLabel, connected,
+  presets, selectedPreset, onSelectPreset, onSavePreset, onLoadPreset,
+  onExportPresets, onImportPresets,
 }: Props) {
   return (
     <div className="flex items-center gap-2 px-3 py-1.5 border-b border-fob-border bg-fob-surface h-[44px] shrink-0 select-none">
@@ -99,6 +110,57 @@ export function AcquireToolbar({
             {m === "auto" ? "Auto" : m === "normal" ? "Norm" : m === "single" ? "Single" : "Smart"}
           </button>
         ))}
+      </div>
+
+      <div className="w-px h-5 bg-fob-border mx-1" />
+
+      {/* Preset manager */}
+      <div className="flex items-center gap-1">
+        <select
+          value={selectedPreset ?? ""}
+          onChange={(e) => onSelectPreset(e.target.value)}
+          className="h-6 px-1 text-[11px] bg-fob-surface border border-fob-border rounded text-fob-text focus:outline-none focus:border-fob-blue"
+        >
+          <option value="">Preset…</option>
+          {presets.map((p) => (
+            <option key={p.name} value={p.name}>{p.name}</option>
+          ))}
+        </select>
+        <button
+          onClick={onSavePreset}
+          className="px-2 py-1 rounded bg-fob-surface border border-fob-border text-fob-text font-bold text-[11px] hover:bg-fob-border transition-colors"
+        >
+          Save
+        </button>
+        <button
+          onClick={onLoadPreset}
+          disabled={!selectedPreset}
+          className="px-2 py-1 rounded bg-fob-surface border border-fob-border text-fob-text font-bold text-[11px] hover:bg-fob-border disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        >
+          Load
+        </button>
+        <button
+          onClick={onExportPresets}
+          disabled={presets.length === 0}
+          className="px-2 py-1 rounded bg-fob-surface border border-fob-border text-fob-text font-bold text-[11px] hover:bg-fob-border disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        >
+          Export
+        </button>
+        <label className="px-2 py-1 rounded bg-fob-surface border border-fob-border text-fob-text font-bold text-[11px] hover:bg-fob-border transition-colors cursor-pointer">
+          Import
+          <input
+            type="file"
+            accept=".json,application/json"
+            className="hidden"
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              const text = await file.text();
+              onImportPresets(text);
+              e.target.value = "";
+            }}
+          />
+        </label>
       </div>
 
       <div className="flex-1" />

@@ -47,6 +47,18 @@ export function notifyAutoSetFailed(): void {
   toast.error("Autoset failed: no usable signal", NORMAL);
 }
 
+export function notifyPresetSaved(name: string): void {
+  toast.success(`Preset saved: ${name}`, NORMAL);
+}
+
+export function notifyPresetLoaded(name: string): void {
+  toast.success(`Preset loaded: ${name}`, NORMAL);
+}
+
+export function notifyPresetsImported(count: number): void {
+  toast.success(`${count} preset${count === 1 ? "" : "s"} imported`, NORMAL);
+}
+
 export function notifyError(message: string): void {
   toast.error(message, NORMAL);
 }

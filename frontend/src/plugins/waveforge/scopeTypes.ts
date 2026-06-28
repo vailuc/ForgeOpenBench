@@ -66,3 +66,17 @@ export interface TraceSnapshot {
   triggerOffset?: number;
   dt?: number;
 }
+
+export interface ScopePreset {
+  name: string;
+  createdAt: number;
+  state: {
+    ch1Vertical: VerticalState;
+    ch2Vertical: VerticalState;
+    horizontal: HorizontalState;
+    trigger: TriggerState;
+    math: MathState;
+    phosphorEnabled: boolean;
+    sampleRate: number;
+  };
+}

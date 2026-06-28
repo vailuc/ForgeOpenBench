@@ -11,7 +11,7 @@ import { MathPanel } from "./MathPanel";
 import { MeasurementBar } from "./MeasurementBar";
 import { MeasurementsPanel } from "./MeasurementsPanel";
 import { CursorsPanel } from "./CursorsPanel";
-import type { Measurements, VerticalState, HorizontalState, TriggerState, MathState, MeasurementKey, TraceSnapshot } from "./scopeTypes";
+import type { Measurements, VerticalState, HorizontalState, TriggerState, MathState, MeasurementKey, TraceSnapshot, ScopePreset } from "./scopeTypes";
 import { SAMPLE_RATES_DSO, VDIV_STEPS, SDIV_STEPS, formatSDiv, vDivToVpp, sDivToWindowMs } from "./scopeConstants";
 import { calcMeasurements, autoset } from "./waveformMath";
 import {
@@ -24,8 +24,10 @@ import { timeAxisValues, freqAxisValues, makeVoltAxisValues } from "./axisFormat
 import {
   notifyStarted, notifyStopped, notifySingle, notifyRolling, notifyAveraging,
   notifyConnected, notifyDisconnected, notifyReferenceSaved, notifyReferenceCleared,
-  notifyAutoSetDone, notifyAutoSetFailed, notifyError,
+  notifyAutoSetDone, notifyAutoSetFailed, notifyPresetSaved, notifyPresetLoaded,
+  notifyPresetsImported, notifyError,
 } from "./scopeToasts";
+import { loadPresets, savePresets, createPreset, uniquePresetName, exportPresets, importPresets } from "./scopePresets";
 
 /* ── Props ─────────────────────────────────────────────────────────── */
 interface Props {
@@ -160,6 +162,10 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
 
   // Sample rate (shared)
   const [sampleRate, setSampleRate] = useState(persisted?.sampleRate ?? 4_000_000);
+
+  // Named scope presets
+  const [presets, setPresets] = useState<ScopePreset[]>(() => loadPresets());
+  const [selectedPreset, setSelectedPreset] = useState<string | null>(null);
 
   // Measurements
   const [ch1Meas, setCh1Meas] = useState<Measurements>({
@@ -920,6 +926,61 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
     notifyReferenceCleared();
   };
 
+  const handleSavePreset = () => {
+    const base = uniquePresetName(presets, selectedPreset || "Setup");
+    const name = window.prompt("Save preset as:", base);
+    if (!name) return;
+    const finalName = uniquePresetName(presets, name.trim());
+    const preset = createPreset(finalName, {
+      ch1Vertical, ch2Vertical, horizontal, trigger, math,
+      phosphorEnabled, sampleRate,
+    });
+    const next = presets.filter(p => p.name !== finalName).concat(preset);
+    setPresets(next);
+    savePresets(next);
+    setSelectedPreset(finalName);
+    notifyPresetSaved(finalName);
+  };
+
+  const handleLoadPreset = () => {
+    const preset = presets.find(p => p.name === selectedPreset);
+    if (!preset) return;
+    notifyPresetLoaded(preset.name);
+    setCh1Vertical(preset.state.ch1Vertical);
+    setCh2Vertical(preset.state.ch2Vertical);
+    setHorizontal(preset.state.horizontal);
+    setTrigger(preset.state.trigger);
+    setMath(preset.state.math);
+    setPhosphorEnabled(preset.state.phosphorEnabled);
+    setSampleRate(preset.state.sampleRate);
+  };
+
+  const handleExportPresets = () => {
+    const blob = new Blob([exportPresets(presets)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `scope-presets-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportPresets = (json: string) => {
+    const imported = importPresets(json);
+    if (!imported || imported.length === 0) {
+      notifyError("Import failed: invalid preset file");
+      return;
+    }
+    const next = [...presets];
+    for (const p of imported) {
+      const finalName = uniquePresetName(next, p.name);
+      next.push({ ...p, name: finalName });
+    }
+    setPresets(next);
+    savePresets(next);
+    notifyPresetsImported(imported.length);
+  };
+
   const rateLabel = SAMPLE_RATES_DSO.find(r => r.hz === sampleRate)?.label ?? `${sampleRate / 1e6}MS/s`;
 
   return (
@@ -942,6 +1003,13 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
         sampleRateLabel={rateLabel}
         sDivLabel={formatSDiv(horizontal.sDiv)}
         connected={connected}
+        presets={presets}
+        selectedPreset={selectedPreset}
+        onSelectPreset={setSelectedPreset}
+        onSavePreset={handleSavePreset}
+        onLoadPreset={handleLoadPreset}
+        onExportPresets={handleExportPresets}
+        onImportPresets={handleImportPresets}
       />
 
       {/* Main Area: Canvas + Right Panel */}
