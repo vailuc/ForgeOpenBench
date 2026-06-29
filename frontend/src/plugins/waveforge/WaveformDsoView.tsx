@@ -214,6 +214,8 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
 
   // Trigger line drag state (ref survives across handler re-attachments)
   const isDraggingTriggerRef = useRef(false);
+  const isDraggingCursorARef = useRef(false);
+  const isDraggingCursorBRef = useRef(false);
 
   // Derived values for backend
   const vpp = vDivToVpp(ch1Vertical.vDiv);
@@ -449,7 +451,27 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       return y;
     };
 
-    // Custom panning (click-drag), trigger drag, and wheel zoom
+    // Cursor hit detection in canvas-relative coords
+    const getCursorHit = (mx: number, my: number): "a" | "b" | null => {
+      const plot = plotRef.current;
+      if (!plot || !cursorsEnabledRef.current) return null;
+      const a = cursorARef.current;
+      const b = cursorBRef.current;
+      const hitRadius = 12;
+      if (a) {
+        const cx = plot.valToPos(a.x, "x");
+        const cy = plot.valToPos(a.y, "y");
+        if (cx != null && cy != null && Math.abs(mx - cx) <= hitRadius && Math.abs(my - cy) <= hitRadius) return "a";
+      }
+      if (b) {
+        const cx = plot.valToPos(b.x, "x");
+        const cy = plot.valToPos(b.y, "y");
+        if (cx != null && cy != null && Math.abs(mx - cx) <= hitRadius && Math.abs(my - cy) <= hitRadius) return "b";
+      }
+      return null;
+    };
+
+    // Custom panning (click-drag), trigger drag, cursor drag, and wheel zoom
     let isPanning = false;
     let panStartX = 0, panStartY = 0;
     let panStartXMin = 0, panStartXMax = 0, panStartYMin = 0, panStartYMax = 0;
@@ -472,9 +494,22 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
         e.preventDefault();
         return;
       }
-      // Cursor placement (when cursors enabled)
+      // Cursor interaction (when cursors enabled)
       if (cursorsEnabledRef.current) {
         const mx = e.clientX - canvasRect.left;
+        const hit = getCursorHit(mx, my);
+        if (hit === "a") {
+          isDraggingCursorARef.current = true;
+          div.style.cursor = "move";
+          e.preventDefault();
+          return;
+        }
+        if (hit === "b") {
+          isDraggingCursorBRef.current = true;
+          div.style.cursor = "move";
+          e.preventDefault();
+          return;
+        }
         const x = plot.posToVal(mx, "x");
         const y = plot.posToVal(my, "y");
         if (e.shiftKey) {
@@ -516,28 +551,48 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
         setTrigger(prev => ({ ...prev, level: clamped }));
         return;
       }
+      // Cursor drag
+      if (isDraggingCursorARef.current || isDraggingCursorBRef.current) {
+        const plot = plotRef.current;
+        if (!plot) return;
+        const canvas = plot.root.querySelector('canvas') as HTMLCanvasElement | null;
+        if (!canvas) return;
+        const canvasRect = canvas.getBoundingClientRect();
+        const mx = e.clientX - canvasRect.left;
+        const my = e.clientY - canvasRect.top;
+        const x = plot.posToVal(mx, "x");
+        const y = plot.posToVal(my, "y");
+        if (isDraggingCursorARef.current) setCursorA({ x, y });
+        if (isDraggingCursorBRef.current) setCursorB({ x, y });
+        plot.redraw(false, false);
+        return;
+      }
       if (!isPanning) {
-        // Hover: change cursor when near trigger line
+        // Hover: change cursor when near trigger line or cursor
         const plot = plotRef.current;
         const triggerY = getTriggerLineY();
-        let my = -9999;
+        let my = -9999, mx = -9999;
         if (plot) {
           const canvas = plot.root.querySelector('canvas') as HTMLCanvasElement | null;
           if (canvas) {
             const canvasRect = canvas.getBoundingClientRect();
             my = e.clientY - canvasRect.top;
+            mx = e.clientX - canvasRect.left;
           }
         }
-        const near = triggerY !== null && Math.abs(my - triggerY) <= 20;
+        const nearTrigger = triggerY !== null && Math.abs(my - triggerY) <= 20;
+        const nearCursor = mx !== -9999 && getCursorHit(mx, my) !== null;
         // Throttled hover log
         const now = performance.now();
-        if (near && now - (window as any).__lastHoverLog > 500) {
+        if (nearTrigger && now - (window as any).__lastHoverLog > 500) {
           // eslint-disable-next-line no-console
           console.log(`[DSO] hover near trigger: my=${my.toFixed(1)} triggerY=${triggerY.toFixed(1)}`);
           (window as any).__lastHoverLog = now;
         }
-        if (near) {
+        if (nearTrigger) {
           div.style.cursor = "ns-resize";
+        } else if (nearCursor) {
+          div.style.cursor = "move";
         } else {
           div.style.cursor = "";
         }
@@ -557,6 +612,8 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
     };
     const onMouseUp = () => {
       isDraggingTriggerRef.current = false;
+      isDraggingCursorARef.current = false;
+      isDraggingCursorBRef.current = false;
       isPanning = false;
       div.style.cursor = "";
     };
@@ -607,6 +664,26 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
     window.addEventListener('mouseup', onMouseUp);
     div.addEventListener('wheel', onWheel, { passive: false });
 
+    const onDoubleClick = (e: MouseEvent) => {
+      if (!cursorsEnabledRef.current) return;
+      const plot = plotRef.current;
+      if (!plot) return;
+      const canvas = plot.root.querySelector('canvas') as HTMLCanvasElement | null;
+      if (!canvas) return;
+      const canvasRect = canvas.getBoundingClientRect();
+      const mx = e.clientX - canvasRect.left;
+      const my = e.clientY - canvasRect.top;
+      const hit = getCursorHit(mx, my);
+      if (hit === "a") {
+        setCursorA(null);
+        plot.redraw(false, false);
+      } else if (hit === "b") {
+        setCursorB(null);
+        plot.redraw(false, false);
+      }
+    };
+    div.addEventListener('dblclick', onDoubleClick);
+
     // Overview click-to-center
     const onOverviewClick = (e: MouseEvent) => {
       const oplot = overviewPlotRef.current;
@@ -636,6 +713,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
       div.removeEventListener('wheel', onWheel);
+      div.removeEventListener('dblclick', onDoubleClick);
       odiv?.removeEventListener('mousedown', onOverviewClick);
       ro.disconnect(); plotRef.current?.destroy(); plotRef.current = null;
       overviewPlotRef.current?.destroy(); overviewPlotRef.current = null;
