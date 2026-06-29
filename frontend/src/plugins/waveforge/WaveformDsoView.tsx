@@ -922,7 +922,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
           if (connectedRef.current && !runningRef.current && !pausedRef.current) {
             void startRef.current();
           }
-        }, 1000);
+        }, 500);
       }
     });
     return () => {

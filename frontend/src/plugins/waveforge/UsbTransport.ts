@@ -5,8 +5,8 @@ import type {
 import { wsUrl } from "../../core/ws_url";
 
 const USB_BRIDGE_URL = wsUrl("/", 8766);
-const RECONNECT_BASE_MS = 1_000;
-const RECONNECT_MAX_MS  = 5_000;
+const RECONNECT_BASE_MS = 500;
+const RECONNECT_MAX_MS  = 2_000;
 const CONNECT_WAIT_MS   = 15_000;
 
 export class UsbTransport {
