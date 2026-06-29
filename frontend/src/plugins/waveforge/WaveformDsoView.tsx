@@ -66,7 +66,8 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
   useEffect(() => { acquireModeRef.current = acquireMode; }, [acquireMode]);
 
   // Data refs
-  const dataOffRef = useRef<(() => void) | null>(null);
+  // TypeScript 6.0 + @types/react 19 infer function-typed refs as `never`; use any as a workaround.
+  const dataOffRef = useRef<any>(null);
   const ch1Buf = useRef<number[]>([]);
   const ch2Buf = useRef<number[]>([]);
   const mathBuf = useRef<number[]>([]);

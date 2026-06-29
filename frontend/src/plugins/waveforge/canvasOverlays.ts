@@ -78,8 +78,9 @@ export function makeDrawPhosphor(deps: PhosphorDeps): (u: uPlot) => void {
           const sdt = snap.dt ?? 1e-6;
           xFor = (i: number) => u.valToPos(triggerX + (i - toff) * sdt, "x", true);
         } else {
-          if (!snap.xs) continue;
-          xFor = (i: number) => u.valToPos(snap.xs[i], "x", true);
+          const xs = snap.xs;
+          if (!xs) continue;
+          xFor = (i: number) => u.valToPos(xs[i], "x", true);
         }
         ctx.beginPath();
         ctx.strokeStyle = `rgba(160,90,20,${opacity})`;
@@ -109,11 +110,12 @@ export function makeDrawPhosphor(deps: PhosphorDeps): (u: uPlot) => void {
     }
     // Rolling-mode smart lock overlay
     const lockSnap = deps.rollingLockedSnapRef.current;
-    if (lockSnap && lockSnap.mode === "time" && lockSnap.xs) {
+    const lockXs = lockSnap?.xs;
+    if (lockSnap && lockSnap.mode === "time" && lockXs) {
       const lastTrigger = deps.rollingTriggerTimesRef.current[deps.rollingTriggerTimesRef.current.length - 1];
       const age = performance.now() - (lastTrigger ?? 0);
       if (age < 3000) {
-        const xForLock = (i: number) => u.valToPos(lockSnap.xs[i], "x", true);
+        const xForLock = (i: number) => u.valToPos(lockXs[i], "x", true);
         ctx.beginPath();
         ctx.strokeStyle = "rgba(245, 158, 11, 0.85)";
         ctx.lineWidth = 1.5;
