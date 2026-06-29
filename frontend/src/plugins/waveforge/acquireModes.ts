@@ -31,12 +31,12 @@ export interface AcquireCtx {
   stop: (intentional?: boolean) => void;
 }
 
-export function findTriggerIndex(buf: number[], trigger: TriggerState, sampleRate: number): number {
+export function findTriggerIndex(buf: number[], trigger: TriggerState, sampleRate: number, windowMs: number): number {
   if (buf.length < 100) return -1;
   const level = trigger.level;
   const slope = trigger.slope;
   const sr = sampleRate || 4_000_000;
-  const windowSamples = Math.max(500, Math.ceil(sr * 0.001));
+  const windowSamples = Math.max(100, Math.ceil(windowMs / 1000 * sr));
   const checkStart = Math.max(0, buf.length - windowSamples);
   for (let i = checkStart + 1; i < buf.length; i++) {
     const prev = buf[i - 1], curr = buf[i];
@@ -47,13 +47,13 @@ export function findTriggerIndex(buf: number[], trigger: TriggerState, sampleRat
   return -1;
 }
 
-export function detectTrigger(buf: number[], trigger: TriggerState, sampleRate: number): boolean {
-  return findTriggerIndex(buf, trigger, sampleRate) >= 0;
+export function detectTrigger(buf: number[], trigger: TriggerState, sampleRate: number, windowMs: number): boolean {
+  return findTriggerIndex(buf, trigger, sampleRate, windowMs) >= 0;
 }
 
 export function handleAcquireMode(ctx: AcquireCtx): void {
   if (ctx.mode === "single-armed") {
-    if (detectTrigger(ctx.sourceBuf, ctx.triggerRef.current, ctx.sampleRateRef.current)) {
+    if (detectTrigger(ctx.sourceBuf, ctx.triggerRef.current, ctx.sampleRateRef.current, ctx.windowMs)) {
       ctx.setAcquireMode("single-held");
       ctx.renderNow(ctx.ch1Buf, ctx.ch2Buf);
       void ctx.stop(true);
@@ -62,7 +62,7 @@ export function handleAcquireMode(ctx: AcquireCtx): void {
   }
 
   if (ctx.mode === "averaging") {
-    if (detectTrigger(ctx.sourceBuf, ctx.triggerRef.current, ctx.sampleRateRef.current)) {
+    if (detectTrigger(ctx.sourceBuf, ctx.triggerRef.current, ctx.sampleRateRef.current, ctx.windowMs)) {
       const n = ctx.ch1Buf.length;
       if (ctx.avgAccumCountRef.current === 0) {
         ctx.avgBuf1Ref.current = new Array(n).fill(0);
@@ -88,7 +88,7 @@ export function handleAcquireMode(ctx: AcquireCtx): void {
   }
 
   if (ctx.mode === "rolling") {
-    const tIdx = findTriggerIndex(ctx.sourceBuf, ctx.triggerRef.current, ctx.sampleRateRef.current);
+    const tIdx = findTriggerIndex(ctx.sourceBuf, ctx.triggerRef.current, ctx.sampleRateRef.current, ctx.windowMs);
     if (tIdx >= 0) {
       ctx.rollingTriggerTimesRef.current.push(performance.now());
       if (ctx.rollingTriggerTimesRef.current.length > 10) ctx.rollingTriggerTimesRef.current.shift();
@@ -145,7 +145,7 @@ export function handleAcquireMode(ctx: AcquireCtx): void {
       ctx.renderNow(ctx.ch1Buf, ctx.ch2Buf);
       ctx.triggerArmedRef.current = true;
     } else if (tmode === "normal") {
-      const triggered = detectTrigger(ctx.sourceBuf, ctx.triggerRef.current, ctx.sampleRateRef.current);
+      const triggered = detectTrigger(ctx.sourceBuf, ctx.triggerRef.current, ctx.sampleRateRef.current, ctx.windowMs);
       if (triggered && ctx.triggerArmedRef.current) {
         ctx.renderNow(ctx.ch1Buf, ctx.ch2Buf);
         ctx.triggerArmedRef.current = false;
@@ -160,7 +160,7 @@ export function handleAcquireMode(ctx: AcquireCtx): void {
         if (slope === "both" && (last < level - margin || last > level + margin)) ctx.triggerArmedRef.current = true;
       }
     } else if (tmode === "smart") {
-      const triggered = detectTrigger(ctx.sourceBuf, ctx.triggerRef.current, ctx.sampleRateRef.current);
+      const triggered = detectTrigger(ctx.sourceBuf, ctx.triggerRef.current, ctx.sampleRateRef.current, ctx.windowMs);
       if (ctx.smartStateRef.current === "auto") {
         ctx.renderNow(ctx.ch1Buf, ctx.ch2Buf);
         if (triggered) {

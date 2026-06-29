@@ -135,9 +135,9 @@ export function renderNow(
   }
 
   const tSrc = ctx.triggerRef.current.source === "ch2" ? r2 : r1;
-  const tIdx = findTriggerIndex(tSrc, ctx.triggerRef.current, ctx.sampleRateRef.current);
   const sr = ctx.sampleRateRef.current || 4_000_000;
   const windowSamples = Math.max(100, Math.ceil(ctx.windowMs / 1000 * sr));
+  const tIdx = findTriggerIndex(tSrc, ctx.triggerRef.current, ctx.sampleRateRef.current, ctx.windowMs);
   const alignTrigger = tIdx >= 0 && rn > windowSamples;
   let s1 = r1, s2 = r2, sM = mathArr;
   let startIdx = 0;
@@ -149,6 +149,12 @@ export function renderNow(
     s1 = r1.slice(startIdx, endIdx);
     s2 = r2.slice(startIdx, endIdx);
     sM = mathArr.slice(startIdx, endIdx);
+  } else if (rn > windowSamples) {
+    // No trigger found: show the latest data instead of the oldest
+    startIdx = rn - windowSamples;
+    s1 = r1.slice(startIdx);
+    s2 = r2.slice(startIdx);
+    sM = mathArr.slice(startIdx);
   }
   const sn = s1.length;
 
