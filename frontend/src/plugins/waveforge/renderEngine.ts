@@ -141,6 +141,9 @@ export function renderNow(
   // Roll mode gets an even smaller window so it feels like a streaming scope.
   const liveWindowMs = rollMode ? Math.min(ctx.windowMs, 50) : Math.min(ctx.windowMs, 200);
   const liveWindowSamples = Math.max(100, Math.ceil(liveWindowMs / 1000 * sr));
+  if (liveWindowSamples < fullWindowSamples && Math.random() < 0.02) {
+    console.log(`[DSO] live window: ${liveWindowMs}ms / ${liveWindowSamples} samples, full: ${ctx.windowMs}ms / ${fullWindowSamples} samples, roll=${rollMode}`);
+  }
   const tIdx = rollMode ? -1 : findTriggerIndex(tSrc, ctx.triggerRef.current, ctx.sampleRateRef.current, liveWindowSamples);
   const alignTrigger = !rollMode && tIdx >= 0 && rn > liveWindowSamples;
   let triggerTime = -1;
