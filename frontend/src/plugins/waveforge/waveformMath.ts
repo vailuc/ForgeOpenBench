@@ -19,16 +19,17 @@ export function calcMeasurements(buf: number[], rate: number): Measurements {
   const dc = sum / buf.length;
   const vpp = max - min;
 
-  // Zero-crossing frequency
+  // Zero-crossing frequency using the 50% amplitude threshold (midpoint of min/max)
+  // rather than DC. This is more robust for half-wave / offset / pulse signals.
+  const threshold = (min + max) / 2;
   let crossings = 0;
   for (let i = 1; i < buf.length; i++) {
-    if ((buf[i - 1] <= dc && buf[i] > dc) || (buf[i - 1] >= dc && buf[i] < dc)) crossings++;
+    if ((buf[i - 1] <= threshold && buf[i] > threshold) || (buf[i - 1] >= threshold && buf[i] < threshold)) crossings++;
   }
   const period = crossings > 0 ? (buf.length / rate) / (crossings / 2) : 0;
   const freq = period > 0 ? 1 / period : 0;
 
   // Duty cycle + pulse widths using 50% threshold
-  const threshold = (min + max) / 2;
   let posTime = 0, negTime = 0;
   for (let i = 1; i < buf.length; i++) {
     const dt = 1 / rate;
@@ -114,12 +115,28 @@ export function autoset(
 
   const { min: bufMin, max: bufMax } = boundsOf(buf);
   const vpp = bufMax - bufMin;
-  const targetVDiv = vpp / 5;
+  // Use vpp / 6 instead of vpp / 5 to leave vertical headroom for half-wave
+  // and offset signals so autoset doesn't clip the top/bottom of the trace.
+  const targetVDiv = vpp / 6;
   const vDiv = findNearestStep(Math.max(targetVDiv, vDivSteps[0]), vDivSteps);
 
   const m = calcMeasurements(buf, rate);
-  const period = m.period || 0.001;
-  const targetSDiv = period / 3;
+  // For half-wave / pulse signals the detected period may be too small; if the
+  // duty cycle is far from 50%, trust the pulse width to recover the full period.
+  let period = m.period || 0.001;
+  const duty = m.dutyCycle / 100;
+  if (duty > 0.05 && duty < 0.95 && (duty < 0.35 || duty > 0.65)) {
+    const pulsePeriod = m.positiveWidth > 0 && duty > 0.5
+      ? m.positiveWidth / duty
+      : m.negativeWidth > 0 && duty < 0.5
+      ? m.negativeWidth / (1 - duty)
+      : 0;
+    if (pulsePeriod > 0 && pulsePeriod > period) {
+      period = pulsePeriod;
+    }
+  }
+  // Show 2 periods across the screen instead of 3 for better detail on half-wave.
+  const targetSDiv = period / 2;
   const sDiv = findNearestStep(Math.max(targetSDiv, sDivSteps[0]), sDivSteps);
 
   const triggerLevel = (bufMax + bufMin) / 2;
