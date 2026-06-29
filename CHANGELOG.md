@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.9.1-rc12] — 2026-06-29
+
+### Added
+- **WaveForge DSO — Export CSV / PNG**
+  - Export CSV button in the acquire toolbar — downloads visible time-domain data for all active series
+  - Export PNG button — captures the uPlot canvas directly to a timestamped PNG
+- **WaveForge DSO — FFT peak markers**
+  - `findFftPeaks` added to `fftEngine.ts`
+  - `makeDrawFftPeaks` overlay renders the top-5 peak frequencies as annotated dots when FFT mode is active
+  - Toggle in Math panel (visible only when FFT op is selected)
+- **WaveForge DSO — Phosphor intensity and persistence control**
+  - Intensity slider (5–100%) and persistence slider in the right panel
+  - Both values are persisted to named presets and `localStorage`
+- **WaveForge DSO — Autoset improvements**
+  - Period detection now uses the 50% amplitude threshold instead of DC, making Autoset robust for half-wave rectified and offset signals
+  - V/div is preserved when the signal already fits the current range; only the vertical position is re-centred
+  - s/div is preserved when at least one full signal period fits the current time window
+  - Pulse-width heuristic recovers the full period for asymmetric duty-cycle signals (< 35% or > 65%)
+- **WaveForge DSO — `waveformMath` unit tests**
+  - 35 Vitest tests covering `findNearestStep`, `calcMeasurements`, `signalVariance`, and `autoset` for sine, half-wave, DC, and asymmetric square-wave signals
+
+### Fixed
+- **WaveForge DSO — Autoset returns null on DC signal**
+  - `autoset()` previously returned a result (minimum V/div, fallback s/div) when both channels were below the noise floor. It now returns `null` correctly.
+- **USB bridge — creeping data-age latency**
+  - `broadcast_binary_sync` no longer drops binary DSO frames when the browser is behind. The asyncio queue absorbs backpressure instead, preventing the 2–3 s waveform-age creep observed under load.
+
+### Changed
+- **WaveForge DSO — architecture**
+  - Waveform math extracted to `waveformMath.ts`, FFT to `fftEngine.ts`, canvas overlays to `canvasOverlays.ts`, render loop to `renderEngine.ts`, acquire mode decisions to `acquireModes.ts`, axis formatters to `axisFormatters.ts`
+  - `WaveformDsoView.tsx` is now an orchestrator; heavy logic lives in focused, independently testable modules
+
+---
+
 ## [0.9.1-rc11] — 2026-06-23 18:55
 
 ### Added

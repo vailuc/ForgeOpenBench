@@ -39,7 +39,9 @@ The 6022BL enumerates at USB VID:PID `0925:3881`. This is the same VID:PID used 
 
 FOB expects the 16-channel firmware `fx2lafw-sigrok-fx2-16ch.fw` (from `sigrok-firmware-fx2lafw`) to be present. The install script tries to install this package automatically.
 
-If you still see the stream die immediately:
+If you still see the stream die immediately, open **Settings → WaveForge** in the FOB UI and switch the device mode between *8ch @ 24 MHz* and *16ch @ 12 MHz*. FOB manages the firmware symlink for you — no `sudo cp` required. Replug the device after switching.
+
+If you prefer to manage firmware manually:
 
 ```bash
 # Back up the original file first
@@ -98,4 +100,4 @@ FOB is an independent, community project. It is not affiliated with, endorsed by
 
 ---
 
-*Last updated: 2026-06-24*
+*Last updated: 2026-06-29*

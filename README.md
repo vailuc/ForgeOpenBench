@@ -23,7 +23,7 @@ FOB is the *"now what."*
 | Plugin | What It Does | The Vibe |
 |---|---|---|
 | **PocketForge** | Connect a Pokit Pro or Pokit Meter over Bluetooth. Real-time multimeter, data logger, and a 1-channel oscilloscope (Pokit Pro) with CRT-style phosphor persistence, REL/GATE/SNR math, and Vpp/Freq/RMS overlays. | Your pocket multimeter just became a bench scope. |
-| **WaveForge** | Hook up a Hantek 6022BL (or any sigrok-compatible USB logic analyzer). 2-channel DSO + 16-channel LA with live rolling capture, draggable cursors, pan/zoom, UART/I2C/SPI decoders, CSV/VCD export, and auto-reconnect. | PulseView, but it does not make your CPU cry. |
+| **WaveForge** | Hook up a Hantek 6022BL. **DSO mode:** 2-channel oscilloscope with live capture, Autoset, FFT with peak markers, XY mode, digital phosphor with intensity control, draggable A/B cursors, reference waveforms, math channel, measurements panel, named presets, CSV/PNG export. **LA mode:** 16-channel logic analyzer with live rolling capture, draggable cursors, pan/zoom, UART/I2C/SPI decoders, CSV/VCD export. | PulseView, but it does not make your CPU cry. |
 | **LensForge** | Point any USB or IP camera at your board. Multi-pane live video with per-pane focus/exposure controls, SVG annotation layers (crosshair, grid, reticle), one-click snapshots, and video recording into your project folder. | Your USB camera is now a lab microscope with markup. |
 | **NoteForge** | Write markdown project notes with wiki-links (`[[Like This]]`), full-text search, canvas snapshot embeds, and auto-generated project READMEs. Think Obsidian, but it knows what hardware you just captured. | Engineering notebook that auto-links your captures. |
 | **Dashboard** | Project switcher, hardware health at a glance, template-based project creation, and one-click `.zip` export. | The home screen your bench deserves. |
@@ -221,7 +221,7 @@ See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the full engineering roadmap. In sh
 - **v0.9.x** — Release candidates. All core plugins feature-complete, build clean, installable in under 5 minutes.
 - **v0.9.1** — Final release candidate. Sanitized release tree, ready to ship.
 - **v1.0** — Product identity. Responsive mobile layout, first-run wizard, polished chrome. FOB feels like a real product.
-- **v1.1** — Professional instruments. Trigger controls, FFT, serial monitor maturity.
+- **v1.1** — Protocol decoders for DSO, SCPI instrument support, serial monitor maturity.
 - **v1.2** — Platform. Plugin SDK, API docs, telemetry opt-in, commercial licensing path.
 - **v2.0** — *(future, unscoped)* Multi-device sync, shared capture URLs, multi-user bench sessions.
 
