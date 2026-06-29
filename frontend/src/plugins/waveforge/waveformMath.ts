@@ -98,7 +98,8 @@ export function autoset(
   const NOISE_FLOOR = 0.01;
   const hasCh1 = ch1Buf.length >= 10 && ch1Var > NOISE_FLOOR;
   const hasCh2 = ch2Buf.length >= 10 && ch2Var > NOISE_FLOOR;
-  const useCh1 = hasCh1 || (!hasCh2 && ch1Buf.length > ch2Buf.length);
+  if (!hasCh1 && !hasCh2) return null;
+  const useCh1 = hasCh1 || ch1Buf.length > ch2Buf.length;
   const buf = useCh1 ? ch1Buf : ch2Buf;
   if (buf.length < 10) return null;
 
