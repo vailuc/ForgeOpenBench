@@ -959,9 +959,9 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       setTrigger(prev => ({ ...prev, level: result.triggerLevel, source: result.source }));
       // Clear phosphor ghosts so they don't mismatch the new timebase
       phosphorTraces.current = [];
-      // Force a fresh render with current buffers at new settings
+      // Force a fresh render once the new settings/plot rebuild are applied
       if (ch1Buf.current.length > 0) {
-        forceTriggerRef.current?.();
+        window.setTimeout(() => forceTriggerRef.current?.(), 0);
       }
       notifyAutoSetDone();
     } else {
