@@ -201,18 +201,18 @@ function drawCursorHandle(
   color: string,
   plotTop: number
 ) {
-  const w = 24;
-  const h = 14;
+  const w = 48;
+  const h = 28;
   const hx = x - w / 2;
   const hy = plotTop + 4;
   ctx.fillStyle = color;
   ctx.strokeStyle = color;
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.roundRect(hx, hy, w, h, 3);
+  ctx.roundRect(hx, hy, w, h, 4);
   ctx.fill();
   ctx.fillStyle = "#000000";
-  ctx.font = "bold 10px monospace";
+  ctx.font = "bold 14px monospace";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillText(label, x, hy + h / 2);

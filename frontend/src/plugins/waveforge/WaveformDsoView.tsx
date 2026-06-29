@@ -458,9 +458,9 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       const a = cursorARef.current;
       const b = cursorBRef.current;
       const plotTop = plot.bbox.top;
-      // Top handle: 24x14 px centered on the vertical line, 4px below plotTop
-      const handleW = 24;
-      const handleH = 14;
+      // Top handle: 48x28 px centered on the vertical line, 4px below plotTop
+      const handleW = 48;
+      const handleH = 28;
       const handleY = plotTop + 4 + handleH / 2;
       if (a) {
         const cx = plot.valToPos(a.x, "x");
