@@ -457,18 +457,23 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       if (!plot || !cursorsEnabledRef.current) return null;
       const a = cursorARef.current;
       const b = cursorBRef.current;
+      const plotLeft = plot.bbox.left;
+      const plotRight = plotLeft + plot.bbox.width;
       const plotTop = plot.bbox.top;
+      const plotBottom = plotTop + plot.bbox.height;
       // Top handle: 48x28 px centered on the vertical line, 4px below plotTop
       const handleW = 48;
       const handleH = 28;
       const handleY = plotTop + 4 + handleH / 2;
+      const lineHit = 10;
       if (a) {
         const cx = plot.valToPos(a.x, "x");
         const cy = plot.valToPos(a.y, "y");
         if (cx != null) {
           const nearHandle = Math.abs(mx - cx) <= handleW / 2 && Math.abs(my - handleY) <= handleH / 2;
-          const nearCrosshair = cy != null && Math.abs(mx - cx) <= 12 && Math.abs(my - cy) <= 12;
-          if (nearHandle || nearCrosshair) return "a";
+          const nearVerticalLine = mx >= plotLeft && mx <= plotRight && my >= plotTop && my <= plotBottom && Math.abs(mx - cx) <= lineHit;
+          const nearHorizontalLine = cy != null && mx >= plotLeft && mx <= plotRight && my >= plotTop && my <= plotBottom && Math.abs(my - cy) <= lineHit;
+          if (nearHandle || nearVerticalLine || nearHorizontalLine) return "a";
         }
       }
       if (b) {
@@ -476,8 +481,9 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
         const cy = plot.valToPos(b.y, "y");
         if (cx != null) {
           const nearHandle = Math.abs(mx - cx) <= handleW / 2 && Math.abs(my - handleY) <= handleH / 2;
-          const nearCrosshair = cy != null && Math.abs(mx - cx) <= 12 && Math.abs(my - cy) <= 12;
-          if (nearHandle || nearCrosshair) return "b";
+          const nearVerticalLine = mx >= plotLeft && mx <= plotRight && my >= plotTop && my <= plotBottom && Math.abs(mx - cx) <= lineHit;
+          const nearHorizontalLine = cy != null && mx >= plotLeft && mx <= plotRight && my >= plotTop && my <= plotBottom && Math.abs(my - cy) <= lineHit;
+          if (nearHandle || nearVerticalLine || nearHorizontalLine) return "b";
         }
       }
       return null;
