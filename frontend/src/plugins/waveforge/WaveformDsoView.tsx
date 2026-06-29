@@ -999,7 +999,14 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
           return { ...prev, vDiv, position };
         });
       }
-      setHorizontal(prev => ({ ...prev, sDiv: result.sDiv, rollMode: false }));
+      setHorizontal(prev => {
+        const periodMs = result.period * 1000;
+        const windowMs = sDivToWindowMs(prev.sDiv);
+        // Keep the user's current s/div if at least one full period fits in the
+        // current window. Otherwise use autoset's computed timebase.
+        const keepSDiv = periodMs > 0 && windowMs >= periodMs * 1.2;
+        return { ...prev, sDiv: keepSDiv ? prev.sDiv : result.sDiv, rollMode: false };
+      });
       setTrigger(prev => ({ ...prev, level: result.triggerLevel, source: result.source }));
       // Clear phosphor ghosts so they don't mismatch the new timebase
       phosphorTraces.current = [];

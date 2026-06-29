@@ -145,6 +145,7 @@ export function autoset(
   return {
     vDiv,
     sDiv,
+    period,
     triggerLevel,
     source: useCh1 ? "ch1" : "ch2" as "ch1" | "ch2",
     ch1HasSignal: hasCh1,
