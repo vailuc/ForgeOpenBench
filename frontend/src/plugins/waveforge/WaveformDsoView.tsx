@@ -947,7 +947,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
     setAcquireMode("single-armed");
     void start();
   };
-  const handleAutoSet = () => {
+  const handleAutoSet = async () => {
     const result = autoset(ch1Buf.current, ch2Buf.current, sampleRate, VDIV_STEPS, SDIV_STEPS);
     if (result) {
       // eslint-disable-next-line no-console
@@ -959,9 +959,19 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       setTrigger(prev => ({ ...prev, level: result.triggerLevel, source: result.source }));
       // Clear phosphor ghosts so they don't mismatch the new timebase
       phosphorTraces.current = [];
-      // Force a fresh render once the new settings/plot rebuild are applied
-      if (ch1Buf.current.length > 0) {
-        window.setTimeout(() => forceTriggerRef.current?.(), 0);
+      // If actively acquiring, stop and restart so the next frame uses fresh data
+      // and the new settings. If stopped, just clear stale buffers/plot.
+      const wasActive = acquireModeRef.current !== "stopped";
+      if (wasActive) {
+        await stop(true);
+      }
+      ch1Buf.current = [];
+      ch2Buf.current = [];
+      mathBuf.current = [];
+      plotRef.current?.setData([[], [], [], []]);
+      overviewPlotRef.current?.setData([[], [], [], []]);
+      if (wasActive) {
+        await start();
       }
       notifyAutoSetDone();
     } else {
