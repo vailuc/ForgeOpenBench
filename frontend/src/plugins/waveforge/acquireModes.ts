@@ -175,7 +175,7 @@ export function handleAcquireMode(ctx: AcquireCtx): void {
         }
       } else {
         if (triggered) {
-          ctx.renderNow(ctx.ch1Buf, ctx.ch2Buf, { phosphorOnly: true });
+          ctx.renderNow(ctx.ch1Buf, ctx.ch2Buf);
           ctx.smartMissCountRef.current = 0;
         } else {
           ctx.smartMissCountRef.current++;
