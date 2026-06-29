@@ -1145,6 +1145,8 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
         onAutoSet={handleAutoSet}
         onForceTrigger={handleForceTrigger}
         onClear={handleClear}
+        rollMode={horizontal.rollMode}
+        onToggleRollMode={() => setHorizontal(prev => ({ ...prev, rollMode: !prev.rollMode }))}
         triggerMode={trigger.mode}
         onSetTriggerMode={(mode) => setTrigger(prev => ({ ...prev, mode }))}
         onSaveRef={handleSaveReference}

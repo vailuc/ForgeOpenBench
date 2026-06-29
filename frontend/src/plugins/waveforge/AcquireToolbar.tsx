@@ -9,6 +9,8 @@ interface Props {
   onAutoSet: () => void;
   onForceTrigger: () => void;
   onClear: () => void;
+  rollMode: boolean;
+  onToggleRollMode: () => void;
   triggerMode: "auto" | "normal" | "single" | "smart";
   onSetTriggerMode: (mode: "auto" | "normal" | "single" | "smart") => void;
   onSaveRef: () => void;
@@ -33,6 +35,7 @@ interface Props {
 
 export function AcquireToolbar({
   running, paused, onRun, onStop, onSingle, onAutoSet, onForceTrigger, onClear,
+  rollMode, onToggleRollMode,
   triggerMode, onSetTriggerMode,
   onSaveRef, onClearRef, hasRef,
   sampleRateLabel, sDivLabel, connected,
@@ -63,6 +66,17 @@ export function AcquireToolbar({
         className="px-3 py-1 rounded bg-fob-blue text-fob-accent-text font-bold text-[11px] hover:bg-fob-blue/80 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
       >
         Single
+      </button>
+      <button
+        onClick={onToggleRollMode}
+        disabled={!connected}
+        className={`px-3 py-1 rounded font-bold text-[11px] transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+          rollMode
+            ? "bg-fob-orange text-fob-accent-text"
+            : "bg-fob-surface border border-fob-border text-fob-text hover:bg-fob-border"
+        }`}
+      >
+        Roll
       </button>
       <div className="w-px h-5 bg-fob-border mx-1" />
       <button
