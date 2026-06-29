@@ -293,13 +293,11 @@ _loop: Optional[asyncio.AbstractEventLoop] = None
 # Broadcast to all WS clients
 # ---------------------------------------------------------------------------
 # The capture threads produce frames much faster than the browser can paint or
-# the TCP socket can drain. If the event loop is back-pressured, pending
-# coroutines holding large frames pile up and memory explodes. Keep only one
-# in-flight text and one in-flight binary broadcast; drop new frames until the
-# previous one finishes. This keeps memory bounded and the UI shows the latest
-# data, not a stale backlog.
+# the TCP socket can drain. For text (control) messages we keep only one in-flight
+# broadcast and drop new usb_data frames when back-pressured. For binary DSO frames
+# we now queue them all; dropping binary frames makes the waveform age creep behind
+# wall time.
 _pending_text: Optional[CFuture[None]] = None
-_pending_binary: Optional[CFuture[None]] = None
 
 
 def _is_pending(fut: Optional[CFuture[None]]) -> bool:
@@ -329,13 +327,12 @@ async def _broadcast(data: str) -> None:
 
 
 def broadcast_binary_sync(data: bytes) -> None:
-    """Broadcast raw binary frame to all websocket clients."""
-    global _pending_binary
+    """Broadcast raw binary frame to all websocket clients.
+    Do not drop frames here; let the asyncio queue absorb any backpressure.
+    Dropping frames makes the waveform age creep behind wall time."""
     if _loop is None or not state.clients:
         return
-    if _is_pending(_pending_binary):
-        return
-    _pending_binary = asyncio.run_coroutine_threadsafe(_broadcast_binary(data), _loop)
+    asyncio.run_coroutine_threadsafe(_broadcast_binary(data), _loop)
 
 
 async def _broadcast_binary(data: bytes) -> None:
@@ -1126,7 +1123,6 @@ async def handle_usb_diag(_ws: WebSocketServerProtocol, _req: dict) -> dict:
         "clients": len(state.clients),
         "capturing": state.capturing,
         "pending_text": _is_pending(_pending_text),
-        "pending_binary": _is_pending(_pending_binary),
         "config": {
             "sample_rate_hz": state.config.sample_rate_hz,
             "sample_width": state.config.sample_width,
