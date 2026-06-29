@@ -518,11 +518,13 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
           setCursorA({ x, y });
         }
         plot.redraw(false, false);
+        e.preventDefault();
         return;
       }
       // Otherwise, normal pan (only when not acquiring)
       const amode = acquireModeRef.current;
       if (amode === "running" || amode === "rolling" || amode === "single-armed" || amode === "averaging") return;
+      e.preventDefault();
       isPanning = true;
       panStartX = e.clientX;
       panStartY = e.clientY;
@@ -1148,7 +1150,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       <div className="flex flex-1 gap-1 overflow-hidden min-h-0">
         {/* Canvas */}
         <div className="flex flex-col flex-1 min-h-0 min-w-0 gap-1">
-          <div ref={plotDivRef} className="flex-1 rounded border border-fob-border overflow-hidden bg-fob-surface min-h-0 min-w-0" />
+          <div ref={plotDivRef} className="flex-1 rounded border border-fob-border overflow-hidden bg-fob-surface min-h-0 min-w-0 select-none" />
           {viewMode === "time" && (
             <div ref={overviewDivRef} className="h-20 rounded border border-fob-border overflow-hidden bg-fob-surface shrink-0 min-w-0" />
           )}

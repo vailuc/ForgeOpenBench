@@ -194,30 +194,21 @@ export interface CursorDeps {
   cursorARef: { current: Cursor | null };
   cursorBRef: { current: Cursor | null };
 }
-function drawCursorHandle(
+function drawCursorMarker(
   ctx: CanvasRenderingContext2D,
   x: number,
-  label: string,
-  color: string,
-  plotTop: number
+  y: number,
+  color: string
 ) {
-  const w = 48;
-  const h = 28;
-  const hx = x - w / 2;
-  const hy = plotTop + 4;
   ctx.fillStyle = color;
   ctx.strokeStyle = color;
-  ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.roundRect(hx, hy, w, h, 4);
+  ctx.arc(x, y, 4, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = "#000000";
-  ctx.font = "bold 14px monospace";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(label, x, hy + h / 2);
-  ctx.textAlign = "left";
-  ctx.textBaseline = "alphabetic";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(x, y, 7, 0, Math.PI * 2);
+  ctx.stroke();
 }
 
 export function makeDrawCursors(deps: CursorDeps): (u: uPlot) => void {
@@ -229,10 +220,11 @@ export function makeDrawCursors(deps: CursorDeps): (u: uPlot) => void {
     const plotTop = u.bbox.top;
     const plotBottom = plotTop + u.bbox.height;
     ctx.save();
-    ctx.lineWidth = 1;
+    ctx.lineWidth = 2;
     ctx.setLineDash([4, 4]);
     if (a) {
       const x = u.valToPos(a.x, "x", true);
+      const y = u.valToPos(a.y, "y", true);
       if (x != null) {
         ctx.strokeStyle = "#FFD700";
         ctx.beginPath();
@@ -240,12 +232,13 @@ export function makeDrawCursors(deps: CursorDeps): (u: uPlot) => void {
         ctx.lineTo(x, plotBottom);
         ctx.stroke();
       }
-      if (x != null) {
-        drawCursorHandle(ctx, x, "A", "#FFD700", plotTop);
+      if (x != null && y != null) {
+        drawCursorMarker(ctx, x, y, "#FFD700");
       }
     }
     if (b) {
       const x = u.valToPos(b.x, "x", true);
+      const y = u.valToPos(b.y, "y", true);
       if (x != null) {
         ctx.strokeStyle = "#00FFFF";
         ctx.beginPath();
@@ -253,8 +246,8 @@ export function makeDrawCursors(deps: CursorDeps): (u: uPlot) => void {
         ctx.lineTo(x, plotBottom);
         ctx.stroke();
       }
-      if (x != null) {
-        drawCursorHandle(ctx, x, "B", "#00FFFF", plotTop);
+      if (x != null && y != null) {
+        drawCursorMarker(ctx, x, y, "#00FFFF");
       }
     }
     ctx.setLineDash([]);
