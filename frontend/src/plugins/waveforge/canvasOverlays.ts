@@ -233,7 +233,6 @@ export function makeDrawCursors(deps: CursorDeps): (u: uPlot) => void {
     ctx.setLineDash([4, 4]);
     if (a) {
       const x = u.valToPos(a.x, "x", true);
-      const y = u.valToPos(a.y, "y", true);
       if (x != null) {
         ctx.strokeStyle = "#FFD700";
         ctx.beginPath();
@@ -241,16 +240,12 @@ export function makeDrawCursors(deps: CursorDeps): (u: uPlot) => void {
         ctx.lineTo(x, plotBottom);
         ctx.stroke();
       }
-      if (x != null && y != null) {
-        ctx.fillStyle = "#FFD700";
-        ctx.font = "10px monospace";
-        ctx.fillText("A", x + 2, y - 4);
+      if (x != null) {
         drawCursorHandle(ctx, x, "A", "#FFD700", plotTop);
       }
     }
     if (b) {
       const x = u.valToPos(b.x, "x", true);
-      const y = u.valToPos(b.y, "y", true);
       if (x != null) {
         ctx.strokeStyle = "#00FFFF";
         ctx.beginPath();
@@ -258,10 +253,7 @@ export function makeDrawCursors(deps: CursorDeps): (u: uPlot) => void {
         ctx.lineTo(x, plotBottom);
         ctx.stroke();
       }
-      if (x != null && y != null) {
-        ctx.fillStyle = "#00FFFF";
-        ctx.font = "10px monospace";
-        ctx.fillText("B", x + 2, y - 4);
+      if (x != null) {
         drawCursorHandle(ctx, x, "B", "#00FFFF", plotTop);
       }
     }

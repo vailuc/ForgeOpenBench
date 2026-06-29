@@ -465,12 +465,14 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       const handleW = 48;
       const handleH = 28;
       const handleY = plotTop + 4 + handleH / 2;
-      const lineHit = 10;
+      const lineHit = 20;
       if (a) {
         const cx = plot.valToPos(a.x, "x");
         if (cx != null) {
           const nearHandle = Math.abs(mx - cx) <= handleW / 2 && Math.abs(my - handleY) <= handleH / 2;
           const nearVerticalLine = mx >= plotLeft && mx <= plotRight && my >= plotTop && my <= plotBottom && Math.abs(mx - cx) <= lineHit;
+          // eslint-disable-next-line no-console
+          if (nearHandle || nearVerticalLine) console.log(`[DSO] hit cursor A: mx=${mx.toFixed(1)} my=${my.toFixed(1)} cx=${cx.toFixed(1)} cy=none`);
           if (nearHandle || nearVerticalLine) return "a";
         }
       }
@@ -479,6 +481,8 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
         if (cx != null) {
           const nearHandle = Math.abs(mx - cx) <= handleW / 2 && Math.abs(my - handleY) <= handleH / 2;
           const nearVerticalLine = mx >= plotLeft && mx <= plotRight && my >= plotTop && my <= plotBottom && Math.abs(mx - cx) <= lineHit;
+          // eslint-disable-next-line no-console
+          if (nearHandle || nearVerticalLine) console.log(`[DSO] hit cursor B: mx=${mx.toFixed(1)} my=${my.toFixed(1)} cx=${cx.toFixed(1)}`);
           if (nearHandle || nearVerticalLine) return "b";
         }
       }
@@ -526,6 +530,8 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
         }
         const x = plot.posToVal(mx, "x");
         const y = plot.posToVal(my, "y");
+        // eslint-disable-next-line no-console
+        console.log(`[DSO] cursor place: shift=${e.shiftKey} mx=${mx.toFixed(1)} my=${my.toFixed(1)} x=${x.toFixed(4)} y=${y.toFixed(4)}`);
         if (e.shiftKey) {
           setCursorB({ x, y });
         } else {
