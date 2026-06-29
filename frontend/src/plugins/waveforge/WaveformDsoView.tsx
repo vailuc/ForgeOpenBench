@@ -482,7 +482,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       if (e.button !== 0) return;
       const plot = plotRef.current;
       if (!plot) return;
-      const canvas = plot.root.querySelector('canvas') as HTMLCanvasElement | null;
+      const canvas = plot.ctx.canvas;
       if (!canvas) return;
       const canvasRect = canvas.getBoundingClientRect();
       const my = e.clientY - canvasRect.top;
@@ -538,7 +538,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       if (isDraggingTriggerRef.current) {
         const plot = plotRef.current;
         if (!plot) return;
-        const canvas = plot.root.querySelector('canvas') as HTMLCanvasElement | null;
+        const canvas = plot.ctx.canvas;
         if (!canvas) return;
         const canvasRect = canvas.getBoundingClientRect();
         const mouseY = e.clientY - canvasRect.top;
@@ -557,7 +557,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       if (isDraggingCursorARef.current || isDraggingCursorBRef.current) {
         const plot = plotRef.current;
         if (!plot) return;
-        const canvas = plot.root.querySelector('canvas') as HTMLCanvasElement | null;
+        const canvas = plot.ctx.canvas;
         if (!canvas) return;
         const canvasRect = canvas.getBoundingClientRect();
         const mx = e.clientX - canvasRect.left;
@@ -575,7 +575,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
         const triggerY = getTriggerLineY();
         let my = -9999, mx = -9999;
         if (plot) {
-          const canvas = plot.root.querySelector('canvas') as HTMLCanvasElement | null;
+          const canvas = plot.ctx.canvas;
           if (canvas) {
             const canvasRect = canvas.getBoundingClientRect();
             my = e.clientY - canvasRect.top;
@@ -629,7 +629,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       const yMin = plot.scales.y.min ?? 0;
       const yMax = plot.scales.y.max ?? 0;
       // Use canvas-relative coords (same system as plot.bbox)
-      const canvas = plot.root.querySelector('canvas') as HTMLCanvasElement | null;
+      const canvas = plot.ctx.canvas;
       if (!canvas) return;
       const cRect = canvas.getBoundingClientRect();
       const mx = e.clientX - cRect.left;
@@ -663,7 +663,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       if (!cursorsEnabledRef.current) return;
       const plot = plotRef.current;
       if (!plot) return;
-      const canvas = plot.root.querySelector('canvas') as HTMLCanvasElement | null;
+      const canvas = plot.ctx.canvas;
       if (!canvas) return;
       const canvasRect = canvas.getBoundingClientRect();
       const mx = e.clientX - canvasRect.left;
