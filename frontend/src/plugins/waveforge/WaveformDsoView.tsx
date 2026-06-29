@@ -990,7 +990,12 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
   const handleSetTrigger50Percent = () => {
     const buf = ch1Buf.current.length > 10 ? ch1Buf.current : ch2Buf.current;
     if (buf.length < 10) return;
-    const mid = (Math.max(...buf) + Math.min(...buf)) / 2;
+    let min = buf[0], max = buf[0];
+    for (const v of buf) {
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+    const mid = (max + min) / 2;
     setTrigger(prev => ({ ...prev, level: mid }));
   };
   const handleClear = () => {

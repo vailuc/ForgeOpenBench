@@ -101,12 +101,19 @@ export function autoset(
   const buf = useCh1 ? ch1Buf : ch2Buf;
   if (buf.length < 10) return null;
 
-  const ch1Min = hasCh1 ? Math.min(...ch1Buf) : 0;
-  const ch1Max = hasCh1 ? Math.max(...ch1Buf) : 0;
-  const ch2Min = hasCh2 ? Math.min(...ch2Buf) : 0;
-  const ch2Max = hasCh2 ? Math.max(...ch2Buf) : 0;
+  const boundsOf = (arr: number[]) => {
+    let min = arr[0], max = arr[0];
+    for (const v of arr) {
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+    return { min, max };
+  };
+  const { min: ch1Min, max: ch1Max } = hasCh1 ? boundsOf(ch1Buf) : { min: 0, max: 0 };
+  const { min: ch2Min, max: ch2Max } = hasCh2 ? boundsOf(ch2Buf) : { min: 0, max: 0 };
 
-  const vpp = Math.max(...buf) - Math.min(...buf);
+  const { min: bufMin, max: bufMax } = boundsOf(buf);
+  const vpp = bufMax - bufMin;
   const targetVDiv = vpp / 5;
   const vDiv = findNearestStep(Math.max(targetVDiv, vDivSteps[0]), vDivSteps);
 
@@ -115,7 +122,7 @@ export function autoset(
   const targetSDiv = period / 3;
   const sDiv = findNearestStep(Math.max(targetSDiv, sDivSteps[0]), sDivSteps);
 
-  const triggerLevel = (Math.max(...buf) + Math.min(...buf)) / 2;
+  const triggerLevel = (bufMax + bufMin) / 2;
   const clampPos = (p: number) => Math.max(-5, Math.min(5, p));
 
   return {

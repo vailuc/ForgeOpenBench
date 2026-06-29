@@ -173,8 +173,11 @@ export function handleAcquireMode(ctx: AcquireCtx): void {
       // the display from freezing on the old waveform when the user swaps signals.
       const timeSinceAutoLevel = ctx.nowPerf - ctx.lastAutoLevelT0Ref.current;
       if (ctx.normalMissCountRef.current > 10 && timeSinceAutoLevel > 1000 && ctx.sourceBuf.length > 100) {
-        const min = Math.min(...ctx.sourceBuf);
-        const max = Math.max(...ctx.sourceBuf);
+        let min = ctx.sourceBuf[0], max = ctx.sourceBuf[0];
+        for (const v of ctx.sourceBuf) {
+          if (v < min) min = v;
+          if (v > max) max = v;
+        }
         const mid = (min + max) / 2;
         if (Math.abs(mid - ctx.triggerRef.current.level) > 0.05) {
           ctx.setTriggerLevel(mid);
