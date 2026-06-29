@@ -468,22 +468,18 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       const lineHit = 10;
       if (a) {
         const cx = plot.valToPos(a.x, "x");
-        const cy = plot.valToPos(a.y, "y");
         if (cx != null) {
           const nearHandle = Math.abs(mx - cx) <= handleW / 2 && Math.abs(my - handleY) <= handleH / 2;
           const nearVerticalLine = mx >= plotLeft && mx <= plotRight && my >= plotTop && my <= plotBottom && Math.abs(mx - cx) <= lineHit;
-          const nearHorizontalLine = cy != null && mx >= plotLeft && mx <= plotRight && my >= plotTop && my <= plotBottom && Math.abs(my - cy) <= lineHit;
-          if (nearHandle || nearVerticalLine || nearHorizontalLine) return "a";
+          if (nearHandle || nearVerticalLine) return "a";
         }
       }
       if (b) {
         const cx = plot.valToPos(b.x, "x");
-        const cy = plot.valToPos(b.y, "y");
         if (cx != null) {
           const nearHandle = Math.abs(mx - cx) <= handleW / 2 && Math.abs(my - handleY) <= handleH / 2;
           const nearVerticalLine = mx >= plotLeft && mx <= plotRight && my >= plotTop && my <= plotBottom && Math.abs(mx - cx) <= lineHit;
-          const nearHorizontalLine = cy != null && mx >= plotLeft && mx <= plotRight && my >= plotTop && my <= plotBottom && Math.abs(my - cy) <= lineHit;
-          if (nearHandle || nearVerticalLine || nearHorizontalLine) return "b";
+          if (nearHandle || nearVerticalLine) return "b";
         }
       }
       return null;

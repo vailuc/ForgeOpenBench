@@ -226,8 +226,6 @@ export function makeDrawCursors(deps: CursorDeps): (u: uPlot) => void {
     const b = deps.cursorBRef.current;
     if (!a && !b) return;
     const ctx = u.ctx;
-    const plotLeft = u.bbox.left;
-    const plotRight = plotLeft + u.bbox.width;
     const plotTop = u.bbox.top;
     const plotBottom = plotTop + u.bbox.height;
     ctx.save();
@@ -241,13 +239,6 @@ export function makeDrawCursors(deps: CursorDeps): (u: uPlot) => void {
         ctx.beginPath();
         ctx.moveTo(x, plotTop);
         ctx.lineTo(x, plotBottom);
-        ctx.stroke();
-      }
-      if (y != null) {
-        ctx.strokeStyle = "#FFD700";
-        ctx.beginPath();
-        ctx.moveTo(plotLeft, y);
-        ctx.lineTo(plotRight, y);
         ctx.stroke();
       }
       if (x != null && y != null) {
@@ -265,13 +256,6 @@ export function makeDrawCursors(deps: CursorDeps): (u: uPlot) => void {
         ctx.beginPath();
         ctx.moveTo(x, plotTop);
         ctx.lineTo(x, plotBottom);
-        ctx.stroke();
-      }
-      if (y != null) {
-        ctx.strokeStyle = "#00FFFF";
-        ctx.beginPath();
-        ctx.moveTo(plotLeft, y);
-        ctx.lineTo(plotRight, y);
         ctx.stroke();
       }
       if (x != null && y != null) {
