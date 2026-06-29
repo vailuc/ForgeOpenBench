@@ -74,6 +74,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
   const filtRing1 = useRef<number[]>([]);
   const filtRing2 = useRef<number[]>([]);
   const intentionalStopRef = useRef(false);
+  const autoSettingRef = useRef(false);
   const startRef = useRef<() => Promise<void>>(async () => {});
   const connectedRef = useRef(connected);
   const wasConnectedRef = useRef(connected);
@@ -240,6 +241,10 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
     // actually applies the new sample rate to the hardware. We must unregister
     // the data handler and set intentionalStopRef before calling transport.stop()
     // to avoid RPC timeouts and auto-restart races.
+    if (autoSettingRef.current) {
+      console.log("[DSO] sample-rate change skipped: autoset in progress");
+      return;
+    }
     if (dataOffRef.current) {
       (async () => {
         // --- soft stop (same pattern as handleStop) ---
@@ -956,6 +961,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
   const handleAutoSet = async () => {
     const result = autoset(ch1Buf.current, ch2Buf.current, sampleRate, VDIV_STEPS, SDIV_STEPS);
     if (result) {
+      autoSettingRef.current = true;
       // eslint-disable-next-line no-console
       console.log(`[DSO] Autoset: vDiv=${result.vDiv}V/div, sDiv=${formatSDiv(result.sDiv)}, trigger=${result.triggerLevel.toFixed(3)}V, source=${result.source}`);
       // Center each channel with a real signal on screen
@@ -965,24 +971,20 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       setTrigger(prev => ({ ...prev, level: result.triggerLevel, source: result.source }));
       // Clear phosphor ghosts so they don't mismatch the new timebase
       phosphorTraces.current = [];
-      // If actively acquiring, stop and restart so the next frame uses fresh data
-      // and the new settings. If stopped, just clear stale buffers/plot.
-      const wasActive = acquireModeRef.current !== "stopped";
-      if (wasActive) {
-        await stop(true);
-      }
+      // Autoset does not change the backend sample rate, so a full stop/start is
+      // unnecessary and causes long stalls. Just clear stale buffers/plot.
       ch1Buf.current = [];
       ch2Buf.current = [];
       mathBuf.current = [];
+      filtRing1.current = [];
+      filtRing2.current = [];
       plotRef.current?.setData([[], [], [], []]);
       overviewPlotRef.current?.setData([[], [], [], []]);
-      if (wasActive) {
-        await start();
-      }
       notifyAutoSetDone();
     } else {
       notifyAutoSetFailed();
     }
+    autoSettingRef.current = false;
   };
   const handleForceTrigger = () => {
     // One-shot: render current buffers immediately regardless of trigger state

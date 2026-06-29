@@ -473,6 +473,26 @@ def _hantek_setup(dev: usb.core.Device, cfg) -> bool:
     return True
 
 
+def _reacquire_device() -> bool:
+    """Try to find and claim the USB device after Rust releases it.
+    Returns True if a device was acquired."""
+    info = state.device_info or {}
+    candidates = [
+        (info.get("vid", VID_SCOPE), info.get("pid", PID_SCOPE)),
+        (info.get("renumerate_vid", VID_SCOPE), info.get("renumerate_pid", PID_SCOPE)),
+    ]
+    for vid, pid in candidates:
+        try:
+            dev = usb.core.find(idVendor=vid, idProduct=pid)
+            if dev:
+                state.device = dev
+                log.info(f"Re-acquired device {vid:04x}:{pid:04x}")
+                return True
+        except Exception as e:
+            log.warning(f"Failed to re-acquire device {vid:04x}:{pid:04x}: {e}")
+    return False
+
+
 def _capture_loop_rust() -> None:
     """Spawn Rust hantek-capture binary for DSO mode.
     Reads binary frames from stdout and forwards as websocket binary messages."""
@@ -525,12 +545,15 @@ def _capture_loop_rust() -> None:
         cmd.extend(["--test-freq", str(test_freq)])
 
     log.info(f"Spawning Rust capture: {' '.join(cmd)}")
+    spawn_t0 = time.monotonic()
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except Exception as e:
         log.error(f"Failed to spawn Rust binary: {e}")
         broadcast_sync({"type": "usb_error", "message": f"Rust capture failed: {e}"})
         return
+
+    first_frame_logged = False
 
     # Drain stderr in background. The Rust binary can emit a tight error loop
     # when the device is unplugged, so suppress duplicates and stop on fatal
@@ -584,6 +607,9 @@ def _capture_loop_rust() -> None:
             chunks += 1
             if chunks <= 3:
                 log.info(f"Rust frame #{chunks}: {msg_len} bytes")
+            if not first_frame_logged:
+                first_frame_logged = True
+                log.info(f"Rust first frame after {time.monotonic() - spawn_t0:.2f}s")
 
             # Forward complete frame to frontend (hdr + rest)
             broadcast_binary_sync(hdr + frame)
@@ -615,22 +641,6 @@ def _capture_loop_rust() -> None:
         broadcast_sync({"type": "usb_stopped"})
         log.warning("Rust capture exited unexpectedly (device may have been unplugged)")
 
-    # Re-acquire USB device so next Run doesn't fail with "Not connected"
-    # Try both original VID/PID and renumerated VID/PID
-    info = state.device_info or {}
-    candidates = [
-        (info.get("vid", VID_SCOPE), info.get("pid", PID_SCOPE)),
-        (info.get("renumerate_vid", VID_SCOPE), info.get("renumerate_pid", PID_SCOPE)),
-    ]
-    for vid, pid in candidates:
-        try:
-            dev = usb.core.find(idVendor=vid, idProduct=pid)
-            if dev:
-                state.device = dev
-                log.info(f"Re-acquired device {vid:04x}:{pid:04x} after Rust exit")
-                break
-        except Exception as e:
-            log.warning(f"Failed to re-acquire device {vid:04x}:{pid:04x}: {e}")
     log.info("Rust capture loop exited")
 
 
@@ -1052,19 +1062,22 @@ async def handle_usb_configure(_ws: WebSocketServerProtocol, req: dict) -> dict:
 
 
 async def handle_usb_start(_ws: WebSocketServerProtocol, _req: dict) -> dict:
+    t0 = time.monotonic()
     if state.capturing:
         # Previous capture still winding down — stop it first then continue
         log.info("Start requested while capturing — stopping previous capture first")
         await _stop_capture()
     if state.device is None and not state.config.sigrok:
-        return {"type": "usb_error", "message": "Not connected"}
+        if not _reacquire_device():
+            return {"type": "usb_error", "message": "Not connected"}
 
     state.stop_event.clear()
     state.capturing = True
     target = _capture_loop_sigrok if state.config.sigrok else _capture_loop_direct
     state.capture_thread = threading.Thread(target=target, daemon=True)
     state.capture_thread.start()
-    log.info(f"Capture started (sigrok={state.config.sigrok})")
+    elapsed = time.monotonic() - t0
+    log.info(f"Capture started (sigrok={state.config.sigrok}) in {elapsed:.2f}s")
     return {"type": "usb_started"}
 
 
@@ -1147,6 +1160,7 @@ async def handle_hantek_test_signal(_ws: WebSocketServerProtocol, req: dict) -> 
 
 
 async def _stop_capture() -> None:
+    t0 = time.monotonic()
     if not state.capturing:
         return
     if state.sigrok_proc:
@@ -1185,8 +1199,9 @@ async def _stop_capture() -> None:
     state.rust_proc = None
     # Brief delay so OS releases USB interface before next claim
     await asyncio.sleep(0.1)
+    elapsed = time.monotonic() - t0
     broadcast_sync({"type": "usb_stopped"})
-    log.info("Capture stopped")
+    log.info(f"Capture stopped in {elapsed:.2f}s")
 
 
 HANDLERS = {
