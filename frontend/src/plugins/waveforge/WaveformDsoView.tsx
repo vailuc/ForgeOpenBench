@@ -451,7 +451,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       return y;
     };
 
-    // Cursor hit detection in canvas-relative coords
+    // Cursor hit detection: only the vertical cursor line is grabbable
     const getCursorHit = (mx: number, my: number): "a" | "b" | null => {
       const plot = plotRef.current;
       if (!plot || !cursorsEnabledRef.current) return null;
@@ -461,30 +461,14 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       const plotRight = plotLeft + plot.bbox.width;
       const plotTop = plot.bbox.top;
       const plotBottom = plotTop + plot.bbox.height;
-      // Top handle: 48x28 px centered on the vertical line, 4px below plotTop
-      const handleW = 48;
-      const handleH = 28;
-      const handleY = plotTop + 4 + handleH / 2;
-      const lineHit = 20;
+      const lineHit = 40;
       if (a) {
         const cx = plot.valToPos(a.x, "x");
-        if (cx != null) {
-          const nearHandle = Math.abs(mx - cx) <= handleW / 2 && Math.abs(my - handleY) <= handleH / 2;
-          const nearVerticalLine = mx >= plotLeft && mx <= plotRight && my >= plotTop && my <= plotBottom && Math.abs(mx - cx) <= lineHit;
-          // eslint-disable-next-line no-console
-          if (nearHandle || nearVerticalLine) console.log(`[DSO] hit cursor A: mx=${mx.toFixed(1)} my=${my.toFixed(1)} cx=${cx.toFixed(1)} cy=none`);
-          if (nearHandle || nearVerticalLine) return "a";
-        }
+        if (cx != null && mx >= plotLeft && mx <= plotRight && my >= plotTop && my <= plotBottom && Math.abs(mx - cx) <= lineHit) return "a";
       }
       if (b) {
         const cx = plot.valToPos(b.x, "x");
-        if (cx != null) {
-          const nearHandle = Math.abs(mx - cx) <= handleW / 2 && Math.abs(my - handleY) <= handleH / 2;
-          const nearVerticalLine = mx >= plotLeft && mx <= plotRight && my >= plotTop && my <= plotBottom && Math.abs(mx - cx) <= lineHit;
-          // eslint-disable-next-line no-console
-          if (nearHandle || nearVerticalLine) console.log(`[DSO] hit cursor B: mx=${mx.toFixed(1)} my=${my.toFixed(1)} cx=${cx.toFixed(1)}`);
-          if (nearHandle || nearVerticalLine) return "b";
-        }
+        if (cx != null && mx >= plotLeft && mx <= plotRight && my >= plotTop && my <= plotBottom && Math.abs(mx - cx) <= lineHit) return "b";
       }
       return null;
     };
@@ -503,8 +487,6 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       const canvasRect = canvas.getBoundingClientRect();
       const my = e.clientY - canvasRect.top;
       const triggerY = getTriggerLineY();
-      // eslint-disable-next-line no-console
-      console.log(`[DSO] trigger click: my=${my.toFixed(1)} triggerY=${triggerY?.toFixed(1) ?? 'null'} diff=${triggerY !== null ? Math.abs(my - triggerY).toFixed(1) : 'N/A'}`);
       // Check if clicking near trigger line (works even during acquisition)
       if (triggerY !== null && Math.abs(my - triggerY) <= 20) {
         isDraggingTriggerRef.current = true;
@@ -530,8 +512,6 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
         }
         const x = plot.posToVal(mx, "x");
         const y = plot.posToVal(my, "y");
-        // eslint-disable-next-line no-console
-        console.log(`[DSO] cursor place: shift=${e.shiftKey} mx=${mx.toFixed(1)} my=${my.toFixed(1)} x=${x.toFixed(4)} y=${y.toFixed(4)}`);
         if (e.shiftKey) {
           setCursorB({ x, y });
         } else {
@@ -602,13 +582,6 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
         }
         const nearTrigger = triggerY !== null && Math.abs(my - triggerY) <= 20;
         const nearCursor = mx !== -9999 && getCursorHit(mx, my) !== null;
-        // Throttled hover log
-        const now = performance.now();
-        if (nearTrigger && now - (window as any).__lastHoverLog > 500) {
-          // eslint-disable-next-line no-console
-          console.log(`[DSO] hover near trigger: my=${my.toFixed(1)} triggerY=${triggerY.toFixed(1)}`);
-          (window as any).__lastHoverLog = now;
-        }
         if (nearTrigger) {
           div.style.cursor = "ns-resize";
         } else if (nearCursor) {
