@@ -149,6 +149,10 @@ export function autoset(
     source: useCh1 ? "ch1" : "ch2" as "ch1" | "ch2",
     ch1HasSignal: hasCh1,
     ch2HasSignal: hasCh2,
+    ch1Min,
+    ch1Max,
+    ch2Min,
+    ch2Max,
     ch1Position: hasCh1 ? clampPos((ch1Min + ch1Max) / 2 / vDiv) : 0,
     ch2Position: hasCh2 ? clampPos((ch2Min + ch2Max) / 2 / vDiv) : 0,
   };

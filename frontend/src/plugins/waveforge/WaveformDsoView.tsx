@@ -964,9 +964,41 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       autoSettingRef.current = true;
       // eslint-disable-next-line no-console
       console.log(`[DSO] Autoset: vDiv=${result.vDiv}V/div, sDiv=${formatSDiv(result.sDiv)}, trigger=${result.triggerLevel.toFixed(3)}V, source=${result.source}`);
-      // Center each channel with a real signal on screen
-      if (result.ch1HasSignal) setCh1Vertical(prev => ({ ...prev, vDiv: result.vDiv, position: result.ch1Position }));
-      if (result.ch2HasSignal) setCh2Vertical(prev => ({ ...prev, vDiv: result.vDiv, position: result.ch2Position }));
+      // If the signal already fits in the current V/div, keep that range and only
+      // re-center it. Otherwise use the autoset-computed V/div.
+      const fitMarginDivs = 0.5;
+      const fits = (min: number, max: number, vDiv: number, pos: number) => {
+        const screenMin = (pos - 5) * vDiv;
+        const screenMax = (pos + 5) * vDiv;
+        const margin = fitMarginDivs * vDiv;
+        return min >= screenMin + margin && max <= screenMax - margin;
+      };
+      const centerPos = (min: number, max: number, vDiv: number) => {
+        const mid = (min + max) / 2;
+        // Clamp to keep the signal on-screen if it has a huge offset
+        const pos = mid / vDiv;
+        return Math.max(-5, Math.min(5, pos));
+      };
+      if (result.ch1HasSignal) {
+        setCh1Vertical(prev => {
+          const min = result.ch1Min ?? 0;
+          const max = result.ch1Max ?? 0;
+          const keepVDiv = fits(min, max, prev.vDiv, prev.position);
+          const vDiv = keepVDiv ? prev.vDiv : result.vDiv;
+          const position = keepVDiv ? centerPos(min, max, prev.vDiv) : result.ch1Position;
+          return { ...prev, vDiv, position };
+        });
+      }
+      if (result.ch2HasSignal) {
+        setCh2Vertical(prev => {
+          const min = result.ch2Min ?? 0;
+          const max = result.ch2Max ?? 0;
+          const keepVDiv = fits(min, max, prev.vDiv, prev.position);
+          const vDiv = keepVDiv ? prev.vDiv : result.vDiv;
+          const position = keepVDiv ? centerPos(min, max, prev.vDiv) : result.ch2Position;
+          return { ...prev, vDiv, position };
+        });
+      }
       setHorizontal(prev => ({ ...prev, sDiv: result.sDiv, rollMode: false }));
       setTrigger(prev => ({ ...prev, level: result.triggerLevel, source: result.source }));
       // Clear phosphor ghosts so they don't mismatch the new timebase
