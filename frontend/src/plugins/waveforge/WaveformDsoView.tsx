@@ -99,6 +99,8 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
   const smartStateRef = useRef<"auto" | "locked">("auto");
   const smartTriggerCountRef = useRef(0); // consecutive triggered evaluations in auto sub-state
   const smartMissCountRef = useRef(0);    // consecutive missed triggers in locked sub-state
+  const normalMissCountRef = useRef(0);   // consecutive missed triggers in normal mode
+  const lastAutoLevelT0Ref = useRef(0);   // last normal-mode auto-level adjustment
   useEffect(() => {
     const mode = acquireModeRef.current;
     runningRef.current = mode !== "stopped" && mode !== "single-held";
@@ -822,6 +824,8 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       smartStateRef,
       smartTriggerCountRef,
       smartMissCountRef,
+      normalMissCountRef,
+      lastAutoLevelT0Ref,
       rollingTriggerTimesRef: rollingTriggerTimes,
       rollingLockedSnapRef: rollingLockedSnap,
       avgAccumCountRef: avgAccumCount,
@@ -830,6 +834,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       phosphorTracesRef: phosphorTraces,
       renderNow: (c1, c2, opts) => renderNow(renderCtx, c1, c2, nowPerf, opts),
       setAcquireMode,
+      setTriggerLevel: (level) => setTrigger(prev => ({ ...prev, level })),
       stop,
     });
   }, [vpp, windowMs]);

@@ -25,9 +25,12 @@ export interface AcquireCtx {
   avgBuf1Ref: { current: number[] };
   avgBuf2Ref: { current: number[] };
   phosphorTracesRef: { current: TraceSnapshot[] };
+  normalMissCountRef: { current: number };
+  lastAutoLevelT0Ref: { current: number };
   // Callbacks
   renderNow: (ch1: number[], ch2: number[], opts?: { phosphorOnly?: boolean }) => void;
   setAcquireMode: (mode: AcquireMode) => void;
+  setTriggerLevel: (level: number) => void;
   stop: (intentional?: boolean) => void;
 }
 
@@ -162,6 +165,22 @@ export function handleAcquireMode(ctx: AcquireCtx): void {
       if (triggered && ctx.triggerArmedRef.current) {
         ctx.renderNow(ctx.ch1Buf, ctx.ch2Buf);
         ctx.triggerArmedRef.current = false;
+        ctx.normalMissCountRef.current = 0;
+      } else {
+        ctx.normalMissCountRef.current++;
+      }
+      // Auto-level if the signal hasn't triggered for a while; this prevents
+      // the display from freezing on the old waveform when the user swaps signals.
+      const timeSinceAutoLevel = ctx.nowPerf - ctx.lastAutoLevelT0Ref.current;
+      if (ctx.normalMissCountRef.current > 10 && timeSinceAutoLevel > 1000 && ctx.sourceBuf.length > 100) {
+        const min = Math.min(...ctx.sourceBuf);
+        const max = Math.max(...ctx.sourceBuf);
+        const mid = (min + max) / 2;
+        if (Math.abs(mid - ctx.triggerRef.current.level) > 0.05) {
+          ctx.setTriggerLevel(mid);
+        }
+        ctx.normalMissCountRef.current = 0;
+        ctx.lastAutoLevelT0Ref.current = ctx.nowPerf;
       }
       if (!ctx.triggerArmedRef.current && ctx.sourceBuf.length > 0) {
         const last = ctx.sourceBuf[ctx.sourceBuf.length - 1];
