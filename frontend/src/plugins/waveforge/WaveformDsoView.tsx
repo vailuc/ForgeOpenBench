@@ -11,12 +11,12 @@ import { MathPanel } from "./MathPanel";
 import { MeasurementBar } from "./MeasurementBar";
 import { MeasurementsPanel } from "./MeasurementsPanel";
 import { CursorsPanel } from "./CursorsPanel";
-import type { Measurements, VerticalState, HorizontalState, TriggerState, MathState, MeasurementKey, TraceSnapshot, ScopePreset } from "./scopeTypes";
+import type { Measurements, VerticalState, HorizontalState, TriggerState, MathState, MeasurementKey, TraceSnapshot, ScopePreset, Cursor } from "./scopeTypes";
 import { SAMPLE_RATES_DSO, VDIV_STEPS, SDIV_STEPS, formatSDiv, vDivToVpp, sDivToWindowMs } from "./scopeConstants";
 import { calcMeasurements, autoset } from "./waveformMath";
 import {
   makeDrawTriggerLine, makeDrawPhosphor, makeDrawReference,
-  makeDrawCursors, makeDrawZoomBox,
+  makeDrawCursors, makeDrawZoomBox, makeDrawFftPeaks,
 } from "./canvasOverlays";
 import { renderNow } from "./renderEngine";
 import { handleAcquireMode } from "./acquireModes";
@@ -28,6 +28,7 @@ import {
   notifyPresetsImported, notifyPresetDeleted, notifyError,
 } from "./scopeToasts";
 import { loadPresets, savePresets, createPreset, uniquePresetName, exportPresets, importPresets } from "./scopePresets";
+import { exportTraceCsv, exportPlotPng } from "./scopeExport";
 
 /* ── Props ─────────────────────────────────────────────────────────── */
 interface Props {
@@ -149,7 +150,17 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
   // Digital phosphor state
   const [phosphorEnabled, setPhosphorEnabled] = useState(persisted?.phosphorEnabled ?? false);
   const phosphorEnabledRef = useRef(phosphorEnabled);
+  const [phosphorIntensity, setPhosphorIntensity] = useState(persisted?.phosphorIntensity ?? 0.35);
+  const phosphorIntensityRef = useRef(phosphorIntensity);
+  const [phosphorTracesCount, setPhosphorTracesCount] = useState(persisted?.phosphorTracesCount ?? 8);
+  const phosphorTracesCountRef = useRef(phosphorTracesCount);
+  // FFT peak markers
+  const [fftPeaksEnabled, setFftPeaksEnabled] = useState(false);
+  const fftPeaksEnabledRef = useRef(fftPeaksEnabled);
   useEffect(() => { phosphorEnabledRef.current = phosphorEnabled; }, [phosphorEnabled]);
+  useEffect(() => { phosphorIntensityRef.current = phosphorIntensity; }, [phosphorIntensity]);
+  useEffect(() => { phosphorTracesCountRef.current = phosphorTracesCount; }, [phosphorTracesCount]);
+  useEffect(() => { fftPeaksEnabledRef.current = fftPeaksEnabled; }, [fftPeaksEnabled]);
   // Trace-echo phosphor: ring buffer of recent aligned traces
   const phosphorTraces = useRef<TraceSnapshot[]>([]);
   const forceTriggerRef = useRef<(() => void) | null>(null);
@@ -184,8 +195,8 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
   const [ch2MeasKeys, setCh2MeasKeys] = useState<MeasurementKey[]>(["vpp", "freq", "vrms"]);
 
   // Cursors
-  const [cursorA, setCursorA] = useState<{ t: number; v: number } | null>(null);
-  const [cursorB, setCursorB] = useState<{ t: number; v: number } | null>(null);
+  const [cursorA, setCursorA] = useState<Cursor | null>(null);
+  const [cursorB, setCursorB] = useState<Cursor | null>(null);
   const [cursorsEnabled, setCursorsEnabled] = useState(false);
   const cursorARef = useRef(cursorA);
   useEffect(() => { cursorARef.current = cursorA; }, [cursorA]);
@@ -276,9 +287,9 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
   useEffect(() => {
     saveScopeState({
       ch1Vertical, ch2Vertical, horizontal, trigger, math,
-      phosphorEnabled, sampleRate,
+      phosphorEnabled, phosphorIntensity, phosphorTracesCount, sampleRate,
     });
-  }, [ch1Vertical, ch2Vertical, horizontal, trigger, math, phosphorEnabled, sampleRate]);
+  }, [ch1Vertical, ch2Vertical, horizontal, trigger, math, phosphorEnabled, phosphorIntensity, phosphorTracesCount, sampleRate]);
 
   // Auto-start when connected and active (skip during parent-initiated reset)
   useEffect(() => {
@@ -317,11 +328,14 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
     const drawPhosphor = makeDrawPhosphor({
       tracesRef: phosphorTraces,
       enabledRef: phosphorEnabledRef,
+      intensityRef: phosphorIntensityRef,
+      maxTracesRef: phosphorTracesCountRef,
       rollingTriggerTimesRef: rollingTriggerTimes,
       rollingLockedSnapRef: rollingLockedSnap,
     });
     const drawReference = makeDrawReference({ snapRef: referenceSnapRef });
     const drawCursors = makeDrawCursors({ cursorARef, cursorBRef });
+    const drawFftPeaks = makeDrawFftPeaks({ enabledRef: fftPeaksEnabledRef });
 
     let opts: uPlot.Options;
 
@@ -341,7 +355,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
           { stroke: "#4ADE80", width: 1.5, label: "MATH", show: false },
         ],
         cursor: { show: true, drag: { x: false, y: false } },
-        hooks: { drawClear: [drawPhosphor], draw: [drawCursors] },
+        hooks: { drawClear: [drawPhosphor], draw: [drawCursors, drawFftPeaks] },
       };
     } else if (mode === "xy") {
       opts = {
@@ -461,12 +475,12 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       // Cursor placement (when cursors enabled)
       if (cursorsEnabledRef.current) {
         const mx = e.clientX - canvasRect.left;
-        const t = plot.posToVal(mx, "x");
-        const v = plot.posToVal(my, "y");
+        const x = plot.posToVal(mx, "x");
+        const y = plot.posToVal(my, "y");
         if (e.shiftKey) {
-          setCursorB({ t, v });
+          setCursorB({ x, y });
         } else {
-          setCursorA({ t, v });
+          setCursorA({ x, y });
         }
         plot.redraw(false, false);
         return;
@@ -933,7 +947,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
     const finalName = uniquePresetName(presets, name.trim());
     const preset = createPreset(finalName, {
       ch1Vertical, ch2Vertical, horizontal, trigger, math,
-      phosphorEnabled, sampleRate,
+      phosphorEnabled, phosphorIntensity, phosphorTracesCount, sampleRate,
     });
     const next = presets.filter(p => p.name !== finalName).concat(preset);
     setPresets(next);
@@ -952,6 +966,8 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
     setTrigger(preset.state.trigger);
     setMath(preset.state.math);
     setPhosphorEnabled(preset.state.phosphorEnabled);
+    setPhosphorIntensity(preset.state.phosphorIntensity ?? 0.35);
+    setPhosphorTracesCount(preset.state.phosphorTracesCount ?? 8);
     setSampleRate(preset.state.sampleRate);
   };
 
@@ -994,6 +1010,17 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
     notifyPresetsImported(imported.length);
   };
 
+  const handleExportCsv = () => {
+    const names = ["CH1"];
+    if (ch2Vertical.enabled) names.push("CH2");
+    if (math.enabled) names.push("MATH");
+    exportTraceCsv(plotRef.current, names, viewMode);
+  };
+
+  const handleExportPng = () => {
+    exportPlotPng(plotRef.current, `scope-${viewMode}-${Date.now()}.png`);
+  };
+
   const rateLabel = SAMPLE_RATES_DSO.find(r => r.hz === sampleRate)?.label ?? `${sampleRate / 1e6}MS/s`;
 
   return (
@@ -1024,6 +1051,8 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
         onDeletePreset={handleDeletePreset}
         onExportPresets={handleExportPresets}
         onImportPresets={handleImportPresets}
+        onExportCsv={handleExportCsv}
+        onExportPng={handleExportPng}
       />
 
       {/* Main Area: Canvas + Right Panel */}
@@ -1062,6 +1091,8 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
             state={math}
             onChange={setMath}
             disabled={false}
+            fftPeaksEnabled={fftPeaksEnabled}
+            onToggleFftPeaks={setFftPeaksEnabled}
           />
           <MeasurementsPanel
             ch1Keys={ch1MeasKeys}
@@ -1074,6 +1105,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
             onToggle={setCursorsEnabled}
             cursorA={cursorA}
             cursorB={cursorB}
+            viewMode={viewMode}
           />
           {/* Display / Phosphor */}
           <div className="flex items-center gap-1.5 border-t border-fob-border pt-1">
@@ -1087,6 +1119,36 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
               Digital Phosphor
             </label>
           </div>
+          {phosphorEnabled && (
+            <div className="flex flex-col gap-1 border-t border-fob-border pt-1">
+              <label className="flex items-center gap-1 text-[10px] text-fob-text-dim">
+                Intensity
+                <input
+                  type="range"
+                  min={0.05}
+                  max={1}
+                  step={0.05}
+                  value={phosphorIntensity}
+                  onChange={(e) => setPhosphorIntensity(Number(e.target.value))}
+                  className="w-24 accent-fob-orange"
+                />
+                <span className="font-mono">{Math.round(phosphorIntensity * 100)}%</span>
+              </label>
+              <label className="flex items-center gap-1 text-[10px] text-fob-text-dim">
+                Persistence
+                <input
+                  type="range"
+                  min={1}
+                  max={24}
+                  step={1}
+                  value={phosphorTracesCount}
+                  onChange={(e) => setPhosphorTracesCount(Number(e.target.value))}
+                  className="w-24 accent-fob-orange"
+                />
+                <span className="font-mono">{phosphorTracesCount}</span>
+              </label>
+            </div>
+          )}
         </div>
       </div>
 

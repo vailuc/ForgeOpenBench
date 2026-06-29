@@ -5,9 +5,11 @@ interface Props {
   state: MathState;
   onChange: (s: MathState) => void;
   disabled: boolean;
+  fftPeaksEnabled?: boolean;
+  onToggleFftPeaks?: (v: boolean) => void;
 }
 
-export function MathPanel({ state, onChange, disabled }: Props) {
+export function MathPanel({ state, onChange, disabled, fftPeaksEnabled, onToggleFftPeaks }: Props) {
   return (
     <CollapsibleSection title="Math" defaultOpen={false}>
       {/* Enable */}
@@ -55,6 +57,20 @@ export function MathPanel({ state, onChange, disabled }: Props) {
               <option value="xy">XY (A vs B)</option>
             </select>
           </div>
+
+          {/* FFT peak markers */}
+          {state.op === "fft" && onToggleFftPeaks && (
+            <label className="flex items-center gap-1.5 text-[11px] text-fob-text font-bold">
+              <input
+                type="checkbox"
+                checked={fftPeaksEnabled ?? false}
+                onChange={(e) => onToggleFftPeaks(e.target.checked)}
+                disabled={disabled}
+                className="accent-fob-orange"
+              />
+              Peak markers
+            </label>
+          )}
 
           {/* Source B */}
           {state.op !== "fft" && (

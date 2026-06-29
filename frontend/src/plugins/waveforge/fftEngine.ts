@@ -49,3 +49,34 @@ export function fftMagnitude(buf: number[], sampleRate: number): { freqs: number
   }
   return { freqs, mags };
 }
+
+export interface FftPeak {
+  freq: number;
+  mag: number;
+  index: number;
+}
+
+export function findFftPeaks(
+  freqs: number[],
+  mags: number[],
+  count = 5,
+  minHz = 0,
+  minBinDistance = 3
+): FftPeak[] {
+  const peaks: FftPeak[] = [];
+  for (let i = 1; i < mags.length - 1; i++) {
+    if (freqs[i] < minHz) continue;
+    if (mags[i] > mags[i - 1] && mags[i] > mags[i + 1]) {
+      peaks.push({ freq: freqs[i], mag: mags[i], index: i });
+    }
+  }
+  peaks.sort((a, b) => b.mag - a.mag);
+  const picked: FftPeak[] = [];
+  for (const p of peaks) {
+    if (picked.every(q => Math.abs(p.index - q.index) >= minBinDistance)) {
+      picked.push(p);
+    }
+    if (picked.length >= count) break;
+  }
+  return picked.sort((a, b) => a.freq - b.freq);
+}

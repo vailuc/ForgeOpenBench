@@ -25,6 +25,8 @@ interface Props {
   onDeletePreset: () => void;
   onExportPresets: () => void;
   onImportPresets: (json: string) => void;
+  onExportCsv: () => void;
+  onExportPng: () => void;
 }
 
 export function AcquireToolbar({
@@ -33,7 +35,7 @@ export function AcquireToolbar({
   onSaveRef, onClearRef, hasRef,
   sampleRateLabel, sDivLabel, connected,
   presets, selectedPreset, onSelectPreset, onSavePreset, onLoadPreset, onDeletePreset,
-  onExportPresets, onImportPresets,
+  onExportPresets, onImportPresets, onExportCsv, onExportPng,
 }: Props) {
   return (
     <div className="flex items-center gap-2 px-3 py-1.5 border-b border-fob-border bg-fob-surface h-[44px] shrink-0 select-none">
@@ -95,6 +97,18 @@ export function AcquireToolbar({
           Clear Ref
         </button>
       )}
+      <button
+        onClick={onExportCsv}
+        className="px-2 py-1 rounded bg-fob-surface border border-fob-border text-fob-text font-bold text-[11px] hover:bg-fob-border transition-colors"
+      >
+        CSV
+      </button>
+      <button
+        onClick={onExportPng}
+        className="px-2 py-1 rounded bg-fob-surface border border-fob-border text-fob-text font-bold text-[11px] hover:bg-fob-border transition-colors"
+      >
+        PNG
+      </button>
       <div className="w-px h-5 bg-fob-border mx-1" />
       {/* Trigger mode toggle — auto / normal / single / smart */}
       <div className="flex rounded overflow-hidden border border-fob-border">
