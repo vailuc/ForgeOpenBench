@@ -201,9 +201,11 @@ export function renderNow(
   const yRange = ctx.ch1VerticalRef.current.vDiv * 10;
   const yMin = -yRange / 2 + posOffset;
   const yMax = yRange / 2 + posOffset;
+  const dataMin = sn > 0 ? startIdx * dt : 0;
   const dataMax = sn > 0 ? (startIdx + (m - 1) * step) * dt : 0;
-  const delay = (ctx.horizontalRef.current.position / 100) * dataMax;
-  plot.setScale('x', { min: delay, max: dataMax + delay });
+  const range = dataMax - dataMin;
+  const delay = (ctx.horizontalRef.current.position / 100) * range;
+  plot.setScale('x', { min: dataMin + delay, max: dataMax + delay });
   plot.setScale('y', { min: yMin, max: yMax });
 
   // Render-rate diagnostics
