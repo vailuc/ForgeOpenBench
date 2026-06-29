@@ -1,6 +1,7 @@
 import type uPlot from "uplot";
 import type { TraceSnapshot, MathState, HorizontalState, TriggerState, VerticalState } from "./scopeTypes";
 import { fftMagnitude } from "./fftEngine";
+import { findTriggerTime } from "./acquireModes";
 import { MAX_PHOSPHOR_TRACES } from "./canvasOverlays";
 
 export interface RenderCtx {
@@ -139,6 +140,7 @@ export function renderNow(
   const windowSamples = Math.max(100, Math.ceil(ctx.windowMs / 1000 * sr));
   const tIdx = findTriggerIndex(tSrc, ctx.triggerRef.current, ctx.sampleRateRef.current, ctx.windowMs);
   const alignTrigger = tIdx >= 0 && rn > windowSamples;
+  let triggerTime = -1;
   let s1 = r1, s2 = r2, sM = mathArr;
   let startIdx = 0;
   if (alignTrigger) {
@@ -149,6 +151,7 @@ export function renderNow(
     s1 = r1.slice(startIdx, endIdx);
     s2 = r2.slice(startIdx, endIdx);
     sM = mathArr.slice(startIdx, endIdx);
+    triggerTime = findTriggerTime(tSrc, ctx.triggerRef.current, sr, ctx.windowMs);
   } else if (rn > windowSamples) {
     // No trigger found: show the latest data instead of the oldest
     startIdx = rn - windowSamples;
@@ -164,7 +167,7 @@ export function renderNow(
       mode: "time",
       ys1: new Float64Array(s1),
       ys2: new Float64Array(s2),
-      triggerOffset: alignTrigger ? Math.max(0, tIdx - startIdx) : Math.floor(sn * 0.25),
+      triggerOffset: alignTrigger ? (triggerTime / dt - startIdx) : Math.floor(sn * 0.25),
       dt,
     };
     ctx.phosphorTracesRef.current.push(snap);
@@ -207,8 +210,16 @@ export function renderNow(
   const yRange = ctx.ch1VerticalRef.current.vDiv * 10;
   const yMin = -yRange / 2 + posOffset;
   const yMax = yRange / 2 + posOffset;
-  const dataMin = sn > 0 ? startIdx * dt : 0;
-  const dataMax = sn > 0 ? (startIdx + (m - 1) * step) * dt : 0;
+  let dataMin: number;
+  let dataMax: number;
+  if (alignTrigger && triggerTime >= 0) {
+    const windowSize = windowSamples * dt;
+    dataMin = triggerTime - windowSize * 0.25;
+    dataMax = triggerTime + windowSize * 0.75;
+  } else {
+    dataMin = sn > 0 ? startIdx * dt : 0;
+    dataMax = sn > 0 ? (startIdx + (m - 1) * step) * dt : 0;
+  }
   const range = dataMax - dataMin;
   const delay = (ctx.horizontalRef.current.position / 100) * range;
   plot.setScale('x', { min: dataMin + delay, max: dataMax + delay });

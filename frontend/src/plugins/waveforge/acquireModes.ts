@@ -51,6 +51,17 @@ export function detectTrigger(buf: number[], trigger: TriggerState, sampleRate: 
   return findTriggerIndex(buf, trigger, sampleRate, windowMs) >= 0;
 }
 
+export function findTriggerTime(buf: number[], trigger: TriggerState, sampleRate: number, windowMs: number): number {
+  const tIdx = findTriggerIndex(buf, trigger, sampleRate, windowMs);
+  if (tIdx < 0) return -1;
+  const dt = 1 / (sampleRate || 4_000_000);
+  const prev = buf[tIdx - 1];
+  const curr = buf[tIdx];
+  const level = trigger.level;
+  const fraction = curr !== prev ? (level - prev) / (curr - prev) : 0;
+  return (tIdx - 1 + fraction) * dt;
+}
+
 export function handleAcquireMode(ctx: AcquireCtx): void {
   if (ctx.mode === "single-armed") {
     if (detectTrigger(ctx.sourceBuf, ctx.triggerRef.current, ctx.sampleRateRef.current, ctx.windowMs)) {
