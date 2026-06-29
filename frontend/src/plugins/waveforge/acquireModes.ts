@@ -38,7 +38,9 @@ export function findTriggerIndex(buf: number[], trigger: TriggerState, sampleRat
   const sr = sampleRate || 4_000_000;
   const windowSamples = Math.max(100, Math.ceil(windowMs / 1000 * sr));
   const checkStart = Math.max(0, buf.length - windowSamples);
-  for (let i = checkStart + 1; i < buf.length; i++) {
+  // Search newest-to-oldest so the scope aligns to the most recent trigger,
+  // not a stale trigger that is still present earlier in the rolling buffer.
+  for (let i = buf.length - 1; i > checkStart; i--) {
     const prev = buf[i - 1], curr = buf[i];
     if (slope === "rise" && prev <= level && curr > level) return i;
     if (slope === "fall" && prev >= level && curr < level) return i;
