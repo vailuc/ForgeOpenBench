@@ -1099,6 +1099,22 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
     exportPlotPng(plotRef.current, `scope-${viewMode}-${Date.now()}.png`);
   };
 
+  const setCursorAtCenter = (setCursor: (c: Cursor) => void) => {
+    const plot = plotRef.current;
+    if (!plot) return;
+    const xMin = plot.scales.x.min ?? 0;
+    const xMax = plot.scales.x.max ?? 0;
+    const yMin = plot.scales.y.min ?? 0;
+    const yMax = plot.scales.y.max ?? 0;
+    const x = xMin + (xMax - xMin) * 0.5;
+    const y = yMin + (yMax - yMin) * 0.5;
+    setCursor({ x, y });
+    if (!cursorsEnabled) setCursorsEnabled(true);
+    plot.redraw(false, false);
+  };
+  const handleSetCursorA = () => setCursorAtCenter(setCursorA);
+  const handleSetCursorB = () => setCursorAtCenter(setCursorB);
+
   const rateLabel = SAMPLE_RATES_DSO.find(r => r.hz === sampleRate)?.label ?? `${sampleRate / 1e6}MS/s`;
 
   return (
@@ -1131,6 +1147,8 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
         onImportPresets={handleImportPresets}
         onExportCsv={handleExportCsv}
         onExportPng={handleExportPng}
+        onSetCursorA={handleSetCursorA}
+        onSetCursorB={handleSetCursorB}
       />
 
       {/* Main Area: Canvas + Right Panel */}
