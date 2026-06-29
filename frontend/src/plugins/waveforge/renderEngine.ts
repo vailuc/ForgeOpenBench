@@ -138,8 +138,9 @@ export function renderNow(
   const tSrc = ctx.triggerRef.current.source === "ch2" ? r2 : r1;
   const sr = ctx.sampleRateRef.current || 4_000_000;
   const windowSamples = Math.max(100, Math.ceil(ctx.windowMs / 1000 * sr));
-  const tIdx = findTriggerIndex(tSrc, ctx.triggerRef.current, ctx.sampleRateRef.current, ctx.windowMs);
-  const alignTrigger = tIdx >= 0 && rn > windowSamples;
+  const rollMode = ctx.horizontalRef.current.rollMode;
+  const tIdx = rollMode ? -1 : findTriggerIndex(tSrc, ctx.triggerRef.current, ctx.sampleRateRef.current);
+  const alignTrigger = !rollMode && tIdx >= 0 && rn > windowSamples;
   let triggerTime = -1;
   let s1 = r1, s2 = r2, sM = mathArr;
   let startIdx = 0;
