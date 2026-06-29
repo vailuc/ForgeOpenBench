@@ -952,9 +952,9 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
     if (result) {
       // eslint-disable-next-line no-console
       console.log(`[DSO] Autoset: vDiv=${result.vDiv}V/div, sDiv=${formatSDiv(result.sDiv)}, trigger=${result.triggerLevel.toFixed(3)}V, source=${result.source}`);
-      // Only adjust vDiv on channels that have real signal
-      if (result.ch1HasSignal) setCh1Vertical(prev => ({ ...prev, vDiv: result.vDiv }));
-      if (result.ch2HasSignal) setCh2Vertical(prev => ({ ...prev, vDiv: result.vDiv }));
+      // Center each channel with a real signal on screen
+      if (result.ch1HasSignal) setCh1Vertical(prev => ({ ...prev, vDiv: result.vDiv, position: result.ch1Position }));
+      if (result.ch2HasSignal) setCh2Vertical(prev => ({ ...prev, vDiv: result.vDiv, position: result.ch2Position }));
       setHorizontal(prev => ({ ...prev, sDiv: result.sDiv, rollMode: false }));
       setTrigger(prev => ({ ...prev, level: result.triggerLevel, source: result.source }));
       // Clear phosphor ghosts so they don't mismatch the new timebase

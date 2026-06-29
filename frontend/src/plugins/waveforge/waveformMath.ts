@@ -101,6 +101,11 @@ export function autoset(
   const buf = useCh1 ? ch1Buf : ch2Buf;
   if (buf.length < 10) return null;
 
+  const ch1Min = hasCh1 ? Math.min(...ch1Buf) : 0;
+  const ch1Max = hasCh1 ? Math.max(...ch1Buf) : 0;
+  const ch2Min = hasCh2 ? Math.min(...ch2Buf) : 0;
+  const ch2Max = hasCh2 ? Math.max(...ch2Buf) : 0;
+
   const vpp = Math.max(...buf) - Math.min(...buf);
   const targetVDiv = vpp / 5;
   const vDiv = findNearestStep(Math.max(targetVDiv, vDivSteps[0]), vDivSteps);
@@ -111,6 +116,7 @@ export function autoset(
   const sDiv = findNearestStep(Math.max(targetSDiv, sDivSteps[0]), sDivSteps);
 
   const triggerLevel = (Math.max(...buf) + Math.min(...buf)) / 2;
+  const clampPos = (p: number) => Math.max(-5, Math.min(5, p));
 
   return {
     vDiv,
@@ -119,5 +125,7 @@ export function autoset(
     source: useCh1 ? "ch1" : "ch2" as "ch1" | "ch2",
     ch1HasSignal: hasCh1,
     ch2HasSignal: hasCh2,
+    ch1Position: hasCh1 ? clampPos((ch1Min + ch1Max) / 2 / vDiv) : 0,
+    ch2Position: hasCh2 ? clampPos((ch2Min + ch2Max) / 2 / vDiv) : 0,
   };
 }
