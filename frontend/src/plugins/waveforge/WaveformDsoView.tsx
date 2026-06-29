@@ -11,12 +11,12 @@ import { MathPanel } from "./MathPanel";
 import { MeasurementBar } from "./MeasurementBar";
 import { MeasurementsPanel } from "./MeasurementsPanel";
 import { CursorsPanel } from "./CursorsPanel";
-import type { Measurements, VerticalState, HorizontalState, TriggerState, MathState, MeasurementKey, TraceSnapshot, ScopePreset } from "./scopeTypes";
+import type { Measurements, VerticalState, HorizontalState, TriggerState, MathState, MeasurementKey, TraceSnapshot, ScopePreset, Cursor } from "./scopeTypes";
 import { SAMPLE_RATES_DSO, VDIV_STEPS, SDIV_STEPS, formatSDiv, vDivToVpp, sDivToWindowMs } from "./scopeConstants";
 import { calcMeasurements, autoset } from "./waveformMath";
 import {
   makeDrawTriggerLine, makeDrawPhosphor, makeDrawReference,
-  makeDrawCursors, makeDrawZoomBox,
+  makeDrawCursors, makeDrawZoomBox, makeDrawFftPeaks,
 } from "./canvasOverlays";
 import { renderNow } from "./renderEngine";
 import { handleAcquireMode } from "./acquireModes";
@@ -28,6 +28,7 @@ import {
   notifyPresetsImported, notifyPresetDeleted, notifyError,
 } from "./scopeToasts";
 import { loadPresets, savePresets, createPreset, uniquePresetName, exportPresets, importPresets } from "./scopePresets";
+import { exportTraceCsv, exportPlotPng } from "./scopeExport";
 
 /* ── Props ─────────────────────────────────────────────────────────── */
 interface Props {
@@ -65,13 +66,15 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
   useEffect(() => { acquireModeRef.current = acquireMode; }, [acquireMode]);
 
   // Data refs
-  const dataOffRef = useRef<(() => void) | null>(null);
+  // TypeScript 6.0 + @types/react 19 infer function-typed refs as `never`; use any as a workaround.
+  const dataOffRef = useRef<any>(null);
   const ch1Buf = useRef<number[]>([]);
   const ch2Buf = useRef<number[]>([]);
   const mathBuf = useRef<number[]>([]);
   const filtRing1 = useRef<number[]>([]);
   const filtRing2 = useRef<number[]>([]);
   const intentionalStopRef = useRef(false);
+  const autoSettingRef = useRef(false);
   const startRef = useRef<() => Promise<void>>(async () => {});
   const connectedRef = useRef(connected);
   const wasConnectedRef = useRef(connected);
@@ -98,6 +101,8 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
   const smartStateRef = useRef<"auto" | "locked">("auto");
   const smartTriggerCountRef = useRef(0); // consecutive triggered evaluations in auto sub-state
   const smartMissCountRef = useRef(0);    // consecutive missed triggers in locked sub-state
+  const normalMissCountRef = useRef(0);   // consecutive missed triggers in normal mode
+  const lastAutoLevelT0Ref = useRef(0);   // last normal-mode auto-level adjustment
   useEffect(() => {
     const mode = acquireModeRef.current;
     runningRef.current = mode !== "stopped" && mode !== "single-held";
@@ -149,7 +154,17 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
   // Digital phosphor state
   const [phosphorEnabled, setPhosphorEnabled] = useState(persisted?.phosphorEnabled ?? false);
   const phosphorEnabledRef = useRef(phosphorEnabled);
+  const [phosphorIntensity, setPhosphorIntensity] = useState(persisted?.phosphorIntensity ?? 0.35);
+  const phosphorIntensityRef = useRef(phosphorIntensity);
+  const [phosphorTracesCount, setPhosphorTracesCount] = useState(persisted?.phosphorTracesCount ?? 8);
+  const phosphorTracesCountRef = useRef(phosphorTracesCount);
+  // FFT peak markers
+  const [fftPeaksEnabled, setFftPeaksEnabled] = useState(false);
+  const fftPeaksEnabledRef = useRef(fftPeaksEnabled);
   useEffect(() => { phosphorEnabledRef.current = phosphorEnabled; }, [phosphorEnabled]);
+  useEffect(() => { phosphorIntensityRef.current = phosphorIntensity; }, [phosphorIntensity]);
+  useEffect(() => { phosphorTracesCountRef.current = phosphorTracesCount; }, [phosphorTracesCount]);
+  useEffect(() => { fftPeaksEnabledRef.current = fftPeaksEnabled; }, [fftPeaksEnabled]);
   // Trace-echo phosphor: ring buffer of recent aligned traces
   const phosphorTraces = useRef<TraceSnapshot[]>([]);
   const forceTriggerRef = useRef<(() => void) | null>(null);
@@ -184,8 +199,8 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
   const [ch2MeasKeys, setCh2MeasKeys] = useState<MeasurementKey[]>(["vpp", "freq", "vrms"]);
 
   // Cursors
-  const [cursorA, setCursorA] = useState<{ t: number; v: number } | null>(null);
-  const [cursorB, setCursorB] = useState<{ t: number; v: number } | null>(null);
+  const [cursorA, setCursorA] = useState<Cursor | null>(null);
+  const [cursorB, setCursorB] = useState<Cursor | null>(null);
   const [cursorsEnabled, setCursorsEnabled] = useState(false);
   const cursorARef = useRef(cursorA);
   useEffect(() => { cursorARef.current = cursorA; }, [cursorA]);
@@ -203,6 +218,8 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
 
   // Trigger line drag state (ref survives across handler re-attachments)
   const isDraggingTriggerRef = useRef(false);
+  const isDraggingCursorARef = useRef(false);
+  const isDraggingCursorBRef = useRef(false);
 
   // Derived values for backend
   const vpp = vDivToVpp(ch1Vertical.vDiv);
@@ -224,6 +241,10 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
     // actually applies the new sample rate to the hardware. We must unregister
     // the data handler and set intentionalStopRef before calling transport.stop()
     // to avoid RPC timeouts and auto-restart races.
+    if (autoSettingRef.current) {
+      console.log("[DSO] sample-rate change skipped: autoset in progress");
+      return;
+    }
     if (dataOffRef.current) {
       (async () => {
         // --- soft stop (same pattern as handleStop) ---
@@ -276,9 +297,9 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
   useEffect(() => {
     saveScopeState({
       ch1Vertical, ch2Vertical, horizontal, trigger, math,
-      phosphorEnabled, sampleRate,
+      phosphorEnabled, phosphorIntensity, phosphorTracesCount, sampleRate,
     });
-  }, [ch1Vertical, ch2Vertical, horizontal, trigger, math, phosphorEnabled, sampleRate]);
+  }, [ch1Vertical, ch2Vertical, horizontal, trigger, math, phosphorEnabled, phosphorIntensity, phosphorTracesCount, sampleRate]);
 
   // Auto-start when connected and active (skip during parent-initiated reset)
   useEffect(() => {
@@ -317,11 +338,14 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
     const drawPhosphor = makeDrawPhosphor({
       tracesRef: phosphorTraces,
       enabledRef: phosphorEnabledRef,
+      intensityRef: phosphorIntensityRef,
+      maxTracesRef: phosphorTracesCountRef,
       rollingTriggerTimesRef: rollingTriggerTimes,
       rollingLockedSnapRef: rollingLockedSnap,
     });
     const drawReference = makeDrawReference({ snapRef: referenceSnapRef });
     const drawCursors = makeDrawCursors({ cursorARef, cursorBRef });
+    const drawFftPeaks = makeDrawFftPeaks({ enabledRef: fftPeaksEnabledRef });
 
     let opts: uPlot.Options;
 
@@ -341,7 +365,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
           { stroke: "#4ADE80", width: 1.5, label: "MATH", show: false },
         ],
         cursor: { show: true, drag: { x: false, y: false } },
-        hooks: { drawClear: [drawPhosphor], draw: [drawCursors] },
+        hooks: { drawClear: [drawPhosphor], draw: [drawCursors, drawFftPeaks] },
       };
     } else if (mode === "xy") {
       opts = {
@@ -435,7 +459,29 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       return y;
     };
 
-    // Custom panning (click-drag), trigger drag, and wheel zoom
+    // Cursor hit detection: only the vertical cursor line is grabbable
+    const getCursorHit = (mx: number, my: number): "a" | "b" | null => {
+      const plot = plotRef.current;
+      if (!plot || !cursorsEnabledRef.current) return null;
+      const a = cursorARef.current;
+      const b = cursorBRef.current;
+      const plotLeft = plot.bbox.left;
+      const plotRight = plotLeft + plot.bbox.width;
+      const plotTop = plot.bbox.top;
+      const plotBottom = plotTop + plot.bbox.height;
+      const lineHit = 40;
+      if (a) {
+        const cx = plot.valToPos(a.x, "x");
+        if (cx != null && mx >= plotLeft && mx <= plotRight && my >= plotTop && my <= plotBottom && Math.abs(mx - cx) <= lineHit) return "a";
+      }
+      if (b) {
+        const cx = plot.valToPos(b.x, "x");
+        if (cx != null && mx >= plotLeft && mx <= plotRight && my >= plotTop && my <= plotBottom && Math.abs(mx - cx) <= lineHit) return "b";
+      }
+      return null;
+    };
+
+    // Custom panning (click-drag), trigger drag, cursor drag, and wheel zoom
     let isPanning = false;
     let panStartX = 0, panStartY = 0;
     let panStartXMin = 0, panStartXMax = 0, panStartYMin = 0, panStartYMax = 0;
@@ -444,13 +490,11 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       if (e.button !== 0) return;
       const plot = plotRef.current;
       if (!plot) return;
-      const canvas = plot.root.querySelector('canvas') as HTMLCanvasElement | null;
+      const canvas = plot.ctx.canvas;
       if (!canvas) return;
       const canvasRect = canvas.getBoundingClientRect();
       const my = e.clientY - canvasRect.top;
       const triggerY = getTriggerLineY();
-      // eslint-disable-next-line no-console
-      console.log(`[DSO] trigger click: my=${my.toFixed(1)} triggerY=${triggerY?.toFixed(1) ?? 'null'} diff=${triggerY !== null ? Math.abs(my - triggerY).toFixed(1) : 'N/A'}`);
       // Check if clicking near trigger line (works even during acquisition)
       if (triggerY !== null && Math.abs(my - triggerY) <= 20) {
         isDraggingTriggerRef.current = true;
@@ -458,22 +502,37 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
         e.preventDefault();
         return;
       }
-      // Cursor placement (when cursors enabled)
+      // Cursor interaction (when cursors enabled)
       if (cursorsEnabledRef.current) {
         const mx = e.clientX - canvasRect.left;
-        const t = plot.posToVal(mx, "x");
-        const v = plot.posToVal(my, "y");
+        const hit = getCursorHit(mx, my);
+        if (hit === "a") {
+          isDraggingCursorARef.current = true;
+          div.style.cursor = "move";
+          e.preventDefault();
+          return;
+        }
+        if (hit === "b") {
+          isDraggingCursorBRef.current = true;
+          div.style.cursor = "move";
+          e.preventDefault();
+          return;
+        }
+        const x = plot.posToVal(mx, "x");
+        const y = plot.posToVal(my, "y");
         if (e.shiftKey) {
-          setCursorB({ t, v });
+          setCursorB({ x, y });
         } else {
-          setCursorA({ t, v });
+          setCursorA({ x, y });
         }
         plot.redraw(false, false);
+        e.preventDefault();
         return;
       }
       // Otherwise, normal pan (only when not acquiring)
       const amode = acquireModeRef.current;
       if (amode === "running" || amode === "rolling" || amode === "single-armed" || amode === "averaging") return;
+      e.preventDefault();
       isPanning = true;
       panStartX = e.clientX;
       panStartY = e.clientY;
@@ -487,7 +546,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       if (isDraggingTriggerRef.current) {
         const plot = plotRef.current;
         if (!plot) return;
-        const canvas = plot.root.querySelector('canvas') as HTMLCanvasElement | null;
+        const canvas = plot.ctx.canvas;
         if (!canvas) return;
         const canvasRect = canvas.getBoundingClientRect();
         const mouseY = e.clientY - canvasRect.top;
@@ -502,28 +561,41 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
         setTrigger(prev => ({ ...prev, level: clamped }));
         return;
       }
+      // Cursor drag
+      if (isDraggingCursorARef.current || isDraggingCursorBRef.current) {
+        const plot = plotRef.current;
+        if (!plot) return;
+        const canvas = plot.ctx.canvas;
+        if (!canvas) return;
+        const canvasRect = canvas.getBoundingClientRect();
+        const mx = e.clientX - canvasRect.left;
+        const my = e.clientY - canvasRect.top;
+        const x = plot.posToVal(mx, "x");
+        const y = plot.posToVal(my, "y");
+        if (isDraggingCursorARef.current) setCursorA({ x, y });
+        if (isDraggingCursorBRef.current) setCursorB({ x, y });
+        plot.redraw(false, false);
+        return;
+      }
       if (!isPanning) {
-        // Hover: change cursor when near trigger line
+        // Hover: change cursor when near trigger line or cursor
         const plot = plotRef.current;
         const triggerY = getTriggerLineY();
-        let my = -9999;
+        let my = -9999, mx = -9999;
         if (plot) {
-          const canvas = plot.root.querySelector('canvas') as HTMLCanvasElement | null;
+          const canvas = plot.ctx.canvas;
           if (canvas) {
             const canvasRect = canvas.getBoundingClientRect();
             my = e.clientY - canvasRect.top;
+            mx = e.clientX - canvasRect.left;
           }
         }
-        const near = triggerY !== null && Math.abs(my - triggerY) <= 20;
-        // Throttled hover log
-        const now = performance.now();
-        if (near && now - (window as any).__lastHoverLog > 500) {
-          // eslint-disable-next-line no-console
-          console.log(`[DSO] hover near trigger: my=${my.toFixed(1)} triggerY=${triggerY.toFixed(1)}`);
-          (window as any).__lastHoverLog = now;
-        }
-        if (near) {
+        const nearTrigger = triggerY !== null && Math.abs(my - triggerY) <= 20;
+        const nearCursor = mx !== -9999 && getCursorHit(mx, my) !== null;
+        if (nearTrigger) {
           div.style.cursor = "ns-resize";
+        } else if (nearCursor) {
+          div.style.cursor = "move";
         } else {
           div.style.cursor = "";
         }
@@ -543,6 +615,8 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
     };
     const onMouseUp = () => {
       isDraggingTriggerRef.current = false;
+      isDraggingCursorARef.current = false;
+      isDraggingCursorBRef.current = false;
       isPanning = false;
       div.style.cursor = "";
     };
@@ -563,7 +637,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       const yMin = plot.scales.y.min ?? 0;
       const yMax = plot.scales.y.max ?? 0;
       // Use canvas-relative coords (same system as plot.bbox)
-      const canvas = plot.root.querySelector('canvas') as HTMLCanvasElement | null;
+      const canvas = plot.ctx.canvas;
       if (!canvas) return;
       const cRect = canvas.getBoundingClientRect();
       const mx = e.clientX - cRect.left;
@@ -592,6 +666,26 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
     div.addEventListener('wheel', onWheel, { passive: false });
+
+    const onDoubleClick = (e: MouseEvent) => {
+      if (!cursorsEnabledRef.current) return;
+      const plot = plotRef.current;
+      if (!plot) return;
+      const canvas = plot.ctx.canvas;
+      if (!canvas) return;
+      const canvasRect = canvas.getBoundingClientRect();
+      const mx = e.clientX - canvasRect.left;
+      const my = e.clientY - canvasRect.top;
+      const hit = getCursorHit(mx, my);
+      if (hit === "a") {
+        setCursorA(null);
+        plot.redraw(false, false);
+      } else if (hit === "b") {
+        setCursorB(null);
+        plot.redraw(false, false);
+      }
+    };
+    div.addEventListener('dblclick', onDoubleClick);
 
     // Overview click-to-center
     const onOverviewClick = (e: MouseEvent) => {
@@ -622,6 +716,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
       div.removeEventListener('wheel', onWheel);
+      div.removeEventListener('dblclick', onDoubleClick);
       odiv?.removeEventListener('mousedown', onOverviewClick);
       ro.disconnect(); plotRef.current?.destroy(); plotRef.current = null;
       overviewPlotRef.current?.destroy(); overviewPlotRef.current = null;
@@ -735,6 +830,8 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       smartStateRef,
       smartTriggerCountRef,
       smartMissCountRef,
+      normalMissCountRef,
+      lastAutoLevelT0Ref,
       rollingTriggerTimesRef: rollingTriggerTimes,
       rollingLockedSnapRef: rollingLockedSnap,
       avgAccumCountRef: avgAccumCount,
@@ -743,6 +840,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       phosphorTracesRef: phosphorTraces,
       renderNow: (c1, c2, opts) => renderNow(renderCtx, c1, c2, nowPerf, opts),
       setAcquireMode,
+      setTriggerLevel: (level) => setTrigger(prev => ({ ...prev, level })),
       stop,
     });
   }, [vpp, windowMs]);
@@ -835,7 +933,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
           if (connectedRef.current && !runningRef.current && !pausedRef.current) {
             void startRef.current();
           }
-        }, 1000);
+        }, 500);
       }
     });
     return () => {
@@ -860,26 +958,72 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
     setAcquireMode("single-armed");
     void start();
   };
-  const handleAutoSet = () => {
+  const handleAutoSet = async () => {
     const result = autoset(ch1Buf.current, ch2Buf.current, sampleRate, VDIV_STEPS, SDIV_STEPS);
     if (result) {
+      autoSettingRef.current = true;
       // eslint-disable-next-line no-console
       console.log(`[DSO] Autoset: vDiv=${result.vDiv}V/div, sDiv=${formatSDiv(result.sDiv)}, trigger=${result.triggerLevel.toFixed(3)}V, source=${result.source}`);
-      // Only adjust vDiv on channels that have real signal
-      if (result.ch1HasSignal) setCh1Vertical(prev => ({ ...prev, vDiv: result.vDiv }));
-      if (result.ch2HasSignal) setCh2Vertical(prev => ({ ...prev, vDiv: result.vDiv }));
-      setHorizontal(prev => ({ ...prev, sDiv: result.sDiv, rollMode: false }));
+      // If the signal already fits in the current V/div, keep that range and only
+      // re-center it. Otherwise use the autoset-computed V/div.
+      const fitMarginDivs = 0.5;
+      const fits = (min: number, max: number, vDiv: number, pos: number) => {
+        const screenMin = (pos - 5) * vDiv;
+        const screenMax = (pos + 5) * vDiv;
+        const margin = fitMarginDivs * vDiv;
+        return min >= screenMin + margin && max <= screenMax - margin;
+      };
+      const centerPos = (min: number, max: number, vDiv: number) => {
+        const mid = (min + max) / 2;
+        // Clamp to keep the signal on-screen if it has a huge offset
+        const pos = mid / vDiv;
+        return Math.max(-5, Math.min(5, pos));
+      };
+      if (result.ch1HasSignal) {
+        setCh1Vertical(prev => {
+          const min = result.ch1Min ?? 0;
+          const max = result.ch1Max ?? 0;
+          const keepVDiv = fits(min, max, prev.vDiv, prev.position);
+          const vDiv = keepVDiv ? prev.vDiv : result.vDiv;
+          const position = keepVDiv ? centerPos(min, max, prev.vDiv) : result.ch1Position;
+          return { ...prev, vDiv, position };
+        });
+      }
+      if (result.ch2HasSignal) {
+        setCh2Vertical(prev => {
+          const min = result.ch2Min ?? 0;
+          const max = result.ch2Max ?? 0;
+          const keepVDiv = fits(min, max, prev.vDiv, prev.position);
+          const vDiv = keepVDiv ? prev.vDiv : result.vDiv;
+          const position = keepVDiv ? centerPos(min, max, prev.vDiv) : result.ch2Position;
+          return { ...prev, vDiv, position };
+        });
+      }
+      setHorizontal(prev => {
+        const periodMs = result.period * 1000;
+        const windowMs = sDivToWindowMs(prev.sDiv);
+        // Keep the user's current s/div if at least one full period fits in the
+        // current window. Otherwise use autoset's computed timebase.
+        const keepSDiv = periodMs > 0 && windowMs >= periodMs * 1.2;
+        return { ...prev, sDiv: keepSDiv ? prev.sDiv : result.sDiv, rollMode: false };
+      });
       setTrigger(prev => ({ ...prev, level: result.triggerLevel, source: result.source }));
       // Clear phosphor ghosts so they don't mismatch the new timebase
       phosphorTraces.current = [];
-      // Force a fresh render with current buffers at new settings
-      if (ch1Buf.current.length > 0) {
-        forceTriggerRef.current?.();
-      }
+      // Autoset does not change the backend sample rate, so a full stop/start is
+      // unnecessary and causes long stalls. Just clear stale buffers/plot.
+      ch1Buf.current = [];
+      ch2Buf.current = [];
+      mathBuf.current = [];
+      filtRing1.current = [];
+      filtRing2.current = [];
+      plotRef.current?.setData([[], [], [], []]);
+      overviewPlotRef.current?.setData([[], [], [], []]);
       notifyAutoSetDone();
     } else {
       notifyAutoSetFailed();
     }
+    autoSettingRef.current = false;
   };
   const handleForceTrigger = () => {
     // One-shot: render current buffers immediately regardless of trigger state
@@ -888,7 +1032,12 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
   const handleSetTrigger50Percent = () => {
     const buf = ch1Buf.current.length > 10 ? ch1Buf.current : ch2Buf.current;
     if (buf.length < 10) return;
-    const mid = (Math.max(...buf) + Math.min(...buf)) / 2;
+    let min = buf[0], max = buf[0];
+    for (const v of buf) {
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+    const mid = (max + min) / 2;
     setTrigger(prev => ({ ...prev, level: mid }));
   };
   const handleClear = () => {
@@ -933,7 +1082,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
     const finalName = uniquePresetName(presets, name.trim());
     const preset = createPreset(finalName, {
       ch1Vertical, ch2Vertical, horizontal, trigger, math,
-      phosphorEnabled, sampleRate,
+      phosphorEnabled, phosphorIntensity, phosphorTracesCount, sampleRate,
     });
     const next = presets.filter(p => p.name !== finalName).concat(preset);
     setPresets(next);
@@ -952,6 +1101,8 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
     setTrigger(preset.state.trigger);
     setMath(preset.state.math);
     setPhosphorEnabled(preset.state.phosphorEnabled);
+    setPhosphorIntensity(preset.state.phosphorIntensity ?? 0.35);
+    setPhosphorTracesCount(preset.state.phosphorTracesCount ?? 8);
     setSampleRate(preset.state.sampleRate);
   };
 
@@ -994,6 +1145,33 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
     notifyPresetsImported(imported.length);
   };
 
+  const handleExportCsv = () => {
+    const names = ["CH1"];
+    if (ch2Vertical.enabled) names.push("CH2");
+    if (math.enabled) names.push("MATH");
+    exportTraceCsv(plotRef.current, names, viewMode);
+  };
+
+  const handleExportPng = () => {
+    exportPlotPng(plotRef.current, `scope-${viewMode}-${Date.now()}.png`);
+  };
+
+  const setCursorAtCenter = (setCursor: (c: Cursor) => void) => {
+    const plot = plotRef.current;
+    if (!plot) return;
+    const xMin = plot.scales.x.min ?? 0;
+    const xMax = plot.scales.x.max ?? 0;
+    const yMin = plot.scales.y.min ?? 0;
+    const yMax = plot.scales.y.max ?? 0;
+    const x = xMin + (xMax - xMin) * 0.5;
+    const y = yMin + (yMax - yMin) * 0.5;
+    setCursor({ x, y });
+    if (!cursorsEnabled) setCursorsEnabled(true);
+    plot.redraw(false, false);
+  };
+  const handleSetCursorA = () => setCursorAtCenter(setCursorA);
+  const handleSetCursorB = () => setCursorAtCenter(setCursorB);
+
   const rateLabel = SAMPLE_RATES_DSO.find(r => r.hz === sampleRate)?.label ?? `${sampleRate / 1e6}MS/s`;
 
   return (
@@ -1008,6 +1186,8 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
         onAutoSet={handleAutoSet}
         onForceTrigger={handleForceTrigger}
         onClear={handleClear}
+        rollMode={horizontal.rollMode}
+        onToggleRollMode={() => setHorizontal(prev => ({ ...prev, rollMode: !prev.rollMode }))}
         triggerMode={trigger.mode}
         onSetTriggerMode={(mode) => setTrigger(prev => ({ ...prev, mode }))}
         onSaveRef={handleSaveReference}
@@ -1024,13 +1204,17 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
         onDeletePreset={handleDeletePreset}
         onExportPresets={handleExportPresets}
         onImportPresets={handleImportPresets}
+        onExportCsv={handleExportCsv}
+        onExportPng={handleExportPng}
+        onSetCursorA={handleSetCursorA}
+        onSetCursorB={handleSetCursorB}
       />
 
       {/* Main Area: Canvas + Right Panel */}
       <div className="flex flex-1 gap-1 overflow-hidden min-h-0">
         {/* Canvas */}
         <div className="flex flex-col flex-1 min-h-0 min-w-0 gap-1">
-          <div ref={plotDivRef} className="flex-1 rounded border border-fob-border overflow-hidden bg-fob-surface min-h-0 min-w-0" />
+          <div ref={plotDivRef} className="flex-1 rounded border border-fob-border overflow-hidden bg-fob-surface min-h-0 min-w-0 select-none" />
           {viewMode === "time" && (
             <div ref={overviewDivRef} className="h-20 rounded border border-fob-border overflow-hidden bg-fob-surface shrink-0 min-w-0" />
           )}
@@ -1062,6 +1246,8 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
             state={math}
             onChange={setMath}
             disabled={false}
+            fftPeaksEnabled={fftPeaksEnabled}
+            onToggleFftPeaks={setFftPeaksEnabled}
           />
           <MeasurementsPanel
             ch1Keys={ch1MeasKeys}
@@ -1074,6 +1260,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
             onToggle={setCursorsEnabled}
             cursorA={cursorA}
             cursorB={cursorB}
+            viewMode={viewMode}
           />
           {/* Display / Phosphor */}
           <div className="flex items-center gap-1.5 border-t border-fob-border pt-1">
@@ -1087,6 +1274,36 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
               Digital Phosphor
             </label>
           </div>
+          {phosphorEnabled && (
+            <div className="flex flex-col gap-1 border-t border-fob-border pt-1">
+              <label className="flex items-center gap-1 text-[10px] text-fob-text-dim">
+                Intensity
+                <input
+                  type="range"
+                  min={0.05}
+                  max={1}
+                  step={0.05}
+                  value={phosphorIntensity}
+                  onChange={(e) => setPhosphorIntensity(Number(e.target.value))}
+                  className="w-24 accent-fob-orange"
+                />
+                <span className="font-mono">{Math.round(phosphorIntensity * 100)}%</span>
+              </label>
+              <label className="flex items-center gap-1 text-[10px] text-fob-text-dim">
+                Persistence
+                <input
+                  type="range"
+                  min={1}
+                  max={24}
+                  step={1}
+                  value={phosphorTracesCount}
+                  onChange={(e) => setPhosphorTracesCount(Number(e.target.value))}
+                  className="w-24 accent-fob-orange"
+                />
+                <span className="font-mono">{phosphorTracesCount}</span>
+              </label>
+            </div>
+          )}
         </div>
       </div>
 

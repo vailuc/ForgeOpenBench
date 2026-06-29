@@ -1,5 +1,6 @@
 import type uPlot from "uplot";
-import type { TraceSnapshot } from "./scopeTypes";
+import type { TraceSnapshot, Cursor } from "./scopeTypes";
+import { findFftPeaks } from "./fftEngine";
 
 export const MAX_PHOSPHOR_TRACES = 8;
 
@@ -47,6 +48,8 @@ export function makeDrawTriggerLine(deps: TriggerLineDeps): (u: uPlot) => void {
 export interface PhosphorDeps {
   tracesRef: { current: TraceSnapshot[] };
   enabledRef: { current: boolean };
+  intensityRef: { current: number };
+  maxTracesRef: { current: number };
   rollingTriggerTimesRef: { current: number[] };
   rollingLockedSnapRef: { current: TraceSnapshot | null };
 }
@@ -55,12 +58,14 @@ export function makeDrawPhosphor(deps: PhosphorDeps): (u: uPlot) => void {
     const t0 = performance.now();
     const ctx = u.ctx;
     const traces = deps.tracesRef.current;
+    const maxTraces = deps.maxTracesRef.current;
+    const intensity = deps.intensityRef.current;
     if (deps.enabledRef.current && traces.length > 0) {
       const n = traces.length;
       for (let t = 0; t < n - 1; t++) {
         const snap = traces[t];
         const age = n - 1 - t;
-        const opacity = Math.max(0, 1 - age / MAX_PHOSPHOR_TRACES) * 0.35;
+        const opacity = Math.max(0, 1 - age / maxTraces) * intensity;
         if (opacity <= 0) continue;
         const len = snap.ys1.length;
         const drawStep = Math.max(1, Math.floor(len / 2000));
@@ -73,8 +78,9 @@ export function makeDrawPhosphor(deps: PhosphorDeps): (u: uPlot) => void {
           const sdt = snap.dt ?? 1e-6;
           xFor = (i: number) => u.valToPos(triggerX + (i - toff) * sdt, "x", true);
         } else {
-          if (!snap.xs) continue;
-          xFor = (i: number) => u.valToPos(snap.xs[i], "x", true);
+          const xs = snap.xs;
+          if (!xs) continue;
+          xFor = (i: number) => u.valToPos(xs[i], "x", true);
         }
         ctx.beginPath();
         ctx.strokeStyle = `rgba(160,90,20,${opacity})`;
@@ -104,11 +110,12 @@ export function makeDrawPhosphor(deps: PhosphorDeps): (u: uPlot) => void {
     }
     // Rolling-mode smart lock overlay
     const lockSnap = deps.rollingLockedSnapRef.current;
-    if (lockSnap && lockSnap.mode === "time" && lockSnap.xs) {
+    const lockXs = lockSnap?.xs;
+    if (lockSnap && lockSnap.mode === "time" && lockXs) {
       const lastTrigger = deps.rollingTriggerTimesRef.current[deps.rollingTriggerTimesRef.current.length - 1];
       const age = performance.now() - (lastTrigger ?? 0);
       if (age < 3000) {
-        const xForLock = (i: number) => u.valToPos(lockSnap.xs[i], "x", true);
+        const xForLock = (i: number) => u.valToPos(lockXs[i], "x", true);
         ctx.beginPath();
         ctx.strokeStyle = "rgba(245, 158, 11, 0.85)";
         ctx.lineWidth = 1.5;
@@ -186,25 +193,40 @@ export function makeDrawReference(deps: ReferenceDeps): (u: uPlot) => void {
 
 /* ── Cursors ────────────────────────────────────────────────────────── */
 export interface CursorDeps {
-  cursorARef: { current: { t: number; v: number } | null };
-  cursorBRef: { current: { t: number; v: number } | null };
+  cursorARef: { current: Cursor | null };
+  cursorBRef: { current: Cursor | null };
 }
+function drawCursorMarker(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  color: string
+) {
+  ctx.fillStyle = color;
+  ctx.strokeStyle = color;
+  ctx.beginPath();
+  ctx.arc(x, y, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(x, y, 7, 0, Math.PI * 2);
+  ctx.stroke();
+}
+
 export function makeDrawCursors(deps: CursorDeps): (u: uPlot) => void {
   return (u) => {
     const a = deps.cursorARef.current;
     const b = deps.cursorBRef.current;
     if (!a && !b) return;
     const ctx = u.ctx;
-    const plotLeft = u.bbox.left;
-    const plotRight = plotLeft + u.bbox.width;
     const plotTop = u.bbox.top;
     const plotBottom = plotTop + u.bbox.height;
     ctx.save();
-    ctx.lineWidth = 1;
+    ctx.lineWidth = 2;
     ctx.setLineDash([4, 4]);
     if (a) {
-      const x = u.valToPos(a.t, "x", true);
-      const y = u.valToPos(a.v, "y", true);
+      const x = u.valToPos(a.x, "x", true);
+      const y = u.valToPos(a.y, "y", true);
       if (x != null) {
         ctx.strokeStyle = "#FFD700";
         ctx.beginPath();
@@ -212,22 +234,13 @@ export function makeDrawCursors(deps: CursorDeps): (u: uPlot) => void {
         ctx.lineTo(x, plotBottom);
         ctx.stroke();
       }
-      if (y != null) {
-        ctx.strokeStyle = "#FFD700";
-        ctx.beginPath();
-        ctx.moveTo(plotLeft, y);
-        ctx.lineTo(plotRight, y);
-        ctx.stroke();
-      }
       if (x != null && y != null) {
-        ctx.fillStyle = "#FFD700";
-        ctx.font = "10px monospace";
-        ctx.fillText("A", x + 2, y - 4);
+        drawCursorMarker(ctx, x, y, "#FFD700");
       }
     }
     if (b) {
-      const x = u.valToPos(b.t, "x", true);
-      const y = u.valToPos(b.v, "y", true);
+      const x = u.valToPos(b.x, "x", true);
+      const y = u.valToPos(b.y, "y", true);
       if (x != null) {
         ctx.strokeStyle = "#00FFFF";
         ctx.beginPath();
@@ -235,20 +248,41 @@ export function makeDrawCursors(deps: CursorDeps): (u: uPlot) => void {
         ctx.lineTo(x, plotBottom);
         ctx.stroke();
       }
-      if (y != null) {
-        ctx.strokeStyle = "#00FFFF";
-        ctx.beginPath();
-        ctx.moveTo(plotLeft, y);
-        ctx.lineTo(plotRight, y);
-        ctx.stroke();
-      }
       if (x != null && y != null) {
-        ctx.fillStyle = "#00FFFF";
-        ctx.font = "10px monospace";
-        ctx.fillText("B", x + 2, y - 4);
+        drawCursorMarker(ctx, x, y, "#00FFFF");
       }
     }
     ctx.setLineDash([]);
+    ctx.restore();
+  };
+}
+
+/* ── FFT peak markers ──────────────────────────────────────────────── */
+export interface FftPeaksDeps {
+  enabledRef: { current: boolean };
+}
+export function makeDrawFftPeaks(deps: FftPeaksDeps): (u: uPlot) => void {
+  return (u) => {
+    if (!deps.enabledRef.current) return;
+    const freqs = u.data[0] as Float64Array | number[] | undefined;
+    const mags = u.data[1] as Float64Array | number[] | undefined;
+    if (!freqs || !mags || freqs.length === 0) return;
+    const fArr = freqs instanceof Float64Array ? Array.from(freqs) : freqs;
+    const mArr = mags instanceof Float64Array ? Array.from(mags) : mags;
+    const peaks = findFftPeaks(fArr, mArr, 5, 0, 3);
+    const ctx = u.ctx;
+    ctx.save();
+    ctx.fillStyle = "#F59E0B";
+    ctx.font = "10px monospace";
+    for (const p of peaks) {
+      const x = u.valToPos(p.freq, "x", true);
+      const y = u.valToPos(p.mag, "y", true);
+      if (x == null || y == null) continue;
+      ctx.beginPath();
+      ctx.arc(x, y, 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillText(`${p.freq >= 1e3 ? `${(p.freq / 1e3).toFixed(1)}kHz` : `${p.freq.toFixed(0)}Hz`}`, x + 5, y - 5);
+    }
     ctx.restore();
   };
 }

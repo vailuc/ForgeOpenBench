@@ -9,6 +9,8 @@ interface Props {
   onAutoSet: () => void;
   onForceTrigger: () => void;
   onClear: () => void;
+  rollMode: boolean;
+  onToggleRollMode: () => void;
   triggerMode: "auto" | "normal" | "single" | "smart";
   onSetTriggerMode: (mode: "auto" | "normal" | "single" | "smart") => void;
   onSaveRef: () => void;
@@ -25,15 +27,21 @@ interface Props {
   onDeletePreset: () => void;
   onExportPresets: () => void;
   onImportPresets: (json: string) => void;
+  onExportCsv: () => void;
+  onExportPng: () => void;
+  onSetCursorA: () => void;
+  onSetCursorB: () => void;
 }
 
 export function AcquireToolbar({
   running, paused, onRun, onStop, onSingle, onAutoSet, onForceTrigger, onClear,
+  rollMode, onToggleRollMode,
   triggerMode, onSetTriggerMode,
   onSaveRef, onClearRef, hasRef,
   sampleRateLabel, sDivLabel, connected,
   presets, selectedPreset, onSelectPreset, onSavePreset, onLoadPreset, onDeletePreset,
-  onExportPresets, onImportPresets,
+  onExportPresets, onImportPresets, onExportCsv, onExportPng,
+  onSetCursorA, onSetCursorB,
 }: Props) {
   return (
     <div className="flex items-center gap-2 px-3 py-1.5 border-b border-fob-border bg-fob-surface h-[44px] shrink-0 select-none">
@@ -58,6 +66,17 @@ export function AcquireToolbar({
         className="px-3 py-1 rounded bg-fob-blue text-fob-accent-text font-bold text-[11px] hover:bg-fob-blue/80 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
       >
         Single
+      </button>
+      <button
+        onClick={onToggleRollMode}
+        disabled={!connected}
+        className={`px-3 py-1 rounded font-bold text-[11px] transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+          rollMode
+            ? "bg-fob-orange text-fob-accent-text"
+            : "bg-fob-surface border border-fob-border text-fob-text hover:bg-fob-border"
+        }`}
+      >
+        Roll
       </button>
       <div className="w-px h-5 bg-fob-border mx-1" />
       <button
@@ -95,6 +114,31 @@ export function AcquireToolbar({
           Clear Ref
         </button>
       )}
+      <button
+        onClick={onExportCsv}
+        className="px-2 py-1 rounded bg-fob-surface border border-fob-border text-fob-text font-bold text-[11px] hover:bg-fob-border transition-colors"
+      >
+        CSV
+      </button>
+      <button
+        onClick={onExportPng}
+        className="px-2 py-1 rounded bg-fob-surface border border-fob-border text-fob-text font-bold text-[11px] hover:bg-fob-border transition-colors"
+      >
+        PNG
+      </button>
+      <div className="w-px h-5 bg-fob-border mx-1" />
+      <button
+        onClick={onSetCursorA}
+        className="px-2 py-1 rounded bg-fob-surface border border-fob-border text-fob-orange font-bold text-[11px] hover:bg-fob-border transition-colors"
+      >
+        Set A
+      </button>
+      <button
+        onClick={onSetCursorB}
+        className="px-2 py-1 rounded bg-fob-surface border border-fob-border text-fob-blue font-bold text-[11px] hover:bg-fob-border transition-colors"
+      >
+        Set B
+      </button>
       <div className="w-px h-5 bg-fob-border mx-1" />
       {/* Trigger mode toggle — auto / normal / single / smart */}
       <div className="flex rounded overflow-hidden border border-fob-border">

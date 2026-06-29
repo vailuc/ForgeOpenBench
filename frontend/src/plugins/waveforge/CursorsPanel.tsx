@@ -1,15 +1,12 @@
 import { CollapsibleSection } from "./CollapsibleSection";
-
-interface Cursor {
-  t: number;
-  v: number;
-}
+import type { Cursor } from "./scopeTypes";
 
 interface Props {
   enabled: boolean;
   onToggle: (v: boolean) => void;
   cursorA: Cursor | null;
   cursorB: Cursor | null;
+  viewMode?: "time" | "fft" | "xy";
 }
 
 function F(n: number): string {
@@ -27,10 +24,11 @@ function V(n: number): string {
   return `${n.toFixed(2)}V`;
 }
 
-export function CursorsPanel({ enabled, onToggle, cursorA, cursorB }: Props) {
-  const dt = cursorA && cursorB ? Math.abs(cursorB.t - cursorA.t) : null;
-  const dv = cursorA && cursorB ? Math.abs(cursorB.v - cursorA.v) : null;
-  const invDt = dt && dt > 0 ? 1 / dt : null;
+export function CursorsPanel({ enabled, onToggle, cursorA, cursorB, viewMode = "time" }: Props) {
+  const isXy = viewMode === "xy";
+  const dx = cursorA && cursorB ? Math.abs(cursorB.x - cursorA.x) : null;
+  const dy = cursorA && cursorB ? Math.abs(cursorB.y - cursorA.y) : null;
+  const invDt = !isXy && dx && dx > 0 ? 1 / dx : null;
 
   return (
     <CollapsibleSection title="Cursors" defaultOpen={false}>
@@ -48,20 +46,29 @@ export function CursorsPanel({ enabled, onToggle, cursorA, cursorB }: Props) {
       {cursorA && (
         <div className="text-[11px] text-fob-text mb-1">
           <span className="text-fob-orange font-bold">A</span>{" "}
-          t={F(cursorA.t)} v={V(cursorA.v)}
+          {isXy ? `x=${V(cursorA.x)} y=${V(cursorA.y)}` : `t=${F(cursorA.x)} v=${V(cursorA.y)}`}
         </div>
       )}
       {cursorB && (
         <div className="text-[11px] text-fob-text mb-1">
           <span className="text-fob-blue font-bold">B</span>{" "}
-          t={F(cursorB.t)} v={V(cursorB.v)}
+          {isXy ? `x=${V(cursorB.x)} y=${V(cursorB.y)}` : `t=${F(cursorB.x)} v=${V(cursorB.y)}`}
         </div>
       )}
-      {dt != null && dv != null && (
+      {dx != null && dy != null && (
         <div className="text-[11px] text-fob-text-dim font-mono border-t border-fob-border pt-1 mt-1">
-          <div>ΔT={F(dt)}</div>
-          <div>ΔV={V(dv)}</div>
-          {invDt != null && <div>1/ΔT={invDt >= 1e3 ? `${(invDt / 1e3).toFixed(2)}kHz` : `${invDt.toFixed(1)}Hz`}</div>}
+          {isXy ? (
+            <>
+              <div>ΔX={V(dx)}</div>
+              <div>ΔY={V(dy)}</div>
+            </>
+          ) : (
+            <>
+              <div>ΔT={F(dx)}</div>
+              <div>ΔV={V(dy)}</div>
+              {invDt != null && <div>1/ΔT={invDt >= 1e3 ? `${(invDt / 1e3).toFixed(2)}kHz` : `${invDt.toFixed(1)}Hz`}</div>}
+            </>
+          )}
         </div>
       )}
     </CollapsibleSection>

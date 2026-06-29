@@ -67,6 +67,11 @@ export interface TraceSnapshot {
   dt?: number;
 }
 
+export interface Cursor {
+  x: number;
+  y: number;
+}
+
 export interface ScopePreset {
   name: string;
   createdAt: number;
@@ -77,6 +82,8 @@ export interface ScopePreset {
     trigger: TriggerState;
     math: MathState;
     phosphorEnabled: boolean;
+    phosphorIntensity: number;
+    phosphorTracesCount: number;
     sampleRate: number;
   };
 }

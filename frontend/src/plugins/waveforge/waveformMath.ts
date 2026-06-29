@@ -19,16 +19,17 @@ export function calcMeasurements(buf: number[], rate: number): Measurements {
   const dc = sum / buf.length;
   const vpp = max - min;
 
-  // Zero-crossing frequency
+  // Zero-crossing frequency using the 50% amplitude threshold (midpoint of min/max)
+  // rather than DC. This is more robust for half-wave / offset / pulse signals.
+  const threshold = (min + max) / 2;
   let crossings = 0;
   for (let i = 1; i < buf.length; i++) {
-    if ((buf[i - 1] <= dc && buf[i] > dc) || (buf[i - 1] >= dc && buf[i] < dc)) crossings++;
+    if ((buf[i - 1] <= threshold && buf[i] > threshold) || (buf[i - 1] >= threshold && buf[i] < threshold)) crossings++;
   }
   const period = crossings > 0 ? (buf.length / rate) / (crossings / 2) : 0;
   const freq = period > 0 ? 1 / period : 0;
 
   // Duty cycle + pulse widths using 50% threshold
-  const threshold = (min + max) / 2;
   let posTime = 0, negTime = 0;
   for (let i = 1; i < buf.length; i++) {
     const dt = 1 / rate;
@@ -97,27 +98,64 @@ export function autoset(
   const NOISE_FLOOR = 0.01;
   const hasCh1 = ch1Buf.length >= 10 && ch1Var > NOISE_FLOOR;
   const hasCh2 = ch2Buf.length >= 10 && ch2Var > NOISE_FLOOR;
-  const useCh1 = hasCh1 || (!hasCh2 && ch1Buf.length > ch2Buf.length);
+  if (!hasCh1 && !hasCh2) return null;
+  const useCh1 = hasCh1 || ch1Buf.length > ch2Buf.length;
   const buf = useCh1 ? ch1Buf : ch2Buf;
   if (buf.length < 10) return null;
 
-  const vpp = Math.max(...buf) - Math.min(...buf);
-  const targetVDiv = vpp / 5;
+  const boundsOf = (arr: number[]) => {
+    let min = arr[0], max = arr[0];
+    for (const v of arr) {
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+    return { min, max };
+  };
+  const { min: ch1Min, max: ch1Max } = hasCh1 ? boundsOf(ch1Buf) : { min: 0, max: 0 };
+  const { min: ch2Min, max: ch2Max } = hasCh2 ? boundsOf(ch2Buf) : { min: 0, max: 0 };
+
+  const { min: bufMin, max: bufMax } = boundsOf(buf);
+  const vpp = bufMax - bufMin;
+  // Use vpp / 6 instead of vpp / 5 to leave vertical headroom for half-wave
+  // and offset signals so autoset doesn't clip the top/bottom of the trace.
+  const targetVDiv = vpp / 6;
   const vDiv = findNearestStep(Math.max(targetVDiv, vDivSteps[0]), vDivSteps);
 
   const m = calcMeasurements(buf, rate);
-  const period = m.period || 0.001;
-  const targetSDiv = period / 3;
+  // For half-wave / pulse signals the detected period may be too small; if the
+  // duty cycle is far from 50%, trust the pulse width to recover the full period.
+  let period = m.period || 0.001;
+  const duty = m.dutyCycle / 100;
+  if (duty > 0.05 && duty < 0.95 && (duty < 0.35 || duty > 0.65)) {
+    const pulsePeriod = m.positiveWidth > 0 && duty > 0.5
+      ? m.positiveWidth / duty
+      : m.negativeWidth > 0 && duty < 0.5
+      ? m.negativeWidth / (1 - duty)
+      : 0;
+    if (pulsePeriod > 0 && pulsePeriod > period) {
+      period = pulsePeriod;
+    }
+  }
+  // Show 2 periods across the screen instead of 3 for better detail on half-wave.
+  const targetSDiv = period / 2;
   const sDiv = findNearestStep(Math.max(targetSDiv, sDivSteps[0]), sDivSteps);
 
-  const triggerLevel = (Math.max(...buf) + Math.min(...buf)) / 2;
+  const triggerLevel = (bufMax + bufMin) / 2;
+  const clampPos = (p: number) => Math.max(-5, Math.min(5, p));
 
   return {
     vDiv,
     sDiv,
+    period,
     triggerLevel,
     source: useCh1 ? "ch1" : "ch2" as "ch1" | "ch2",
     ch1HasSignal: hasCh1,
     ch2HasSignal: hasCh2,
+    ch1Min,
+    ch1Max,
+    ch2Min,
+    ch2Max,
+    ch1Position: hasCh1 ? clampPos((ch1Min + ch1Max) / 2 / vDiv) : 0,
+    ch2Position: hasCh2 ? clampPos((ch2Min + ch2Max) / 2 / vDiv) : 0,
   };
 }

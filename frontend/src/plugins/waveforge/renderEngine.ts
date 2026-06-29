@@ -1,6 +1,7 @@
 import type uPlot from "uplot";
 import type { TraceSnapshot, MathState, HorizontalState, TriggerState, VerticalState } from "./scopeTypes";
 import { fftMagnitude } from "./fftEngine";
+import { findTriggerTime } from "./acquireModes";
 import { MAX_PHOSPHOR_TRACES } from "./canvasOverlays";
 
 export interface RenderCtx {
@@ -24,14 +25,15 @@ export interface RenderCtx {
   renderRateT0Ref: { current: number };
 }
 
-export function findTriggerIndex(buf: number[], trigger: TriggerState, sampleRate: number): number {
+export function findTriggerIndex(buf: number[], trigger: TriggerState, sampleRate: number, searchWindowSamples?: number): number {
   if (buf.length < 100) return -1;
   const level = trigger.level;
   const slope = trigger.slope;
   const sr = sampleRate || 4_000_000;
-  const windowSamples = Math.max(500, Math.ceil(sr * 0.001));
+  const defaultWindow = Math.max(500, Math.ceil(sr * 0.001));
+  const windowSamples = searchWindowSamples ? Math.max(100, searchWindowSamples) : defaultWindow;
   const checkStart = Math.max(0, buf.length - windowSamples);
-  for (let i = checkStart + 1; i < buf.length; i++) {
+  for (let i = buf.length - 1; i > checkStart; i--) {
     const prev = buf[i - 1], curr = buf[i];
     if (slope === "rise" && prev <= level && curr > level) return i;
     if (slope === "fall" && prev >= level && curr < level) return i;
@@ -117,11 +119,10 @@ export function renderNow(
   const rn = r1.length;
 
   const doMath = ctx.mathRef.current.enabled && ctx.mathRef.current.op !== "fft" && ctx.mathRef.current.op !== "xy";
-  let mathArr: number[] = [];
+  const mathArr = new Array(rn).fill(0);
   if (doMath) {
     const a = ctx.mathRef.current.sourceA === "ch2" ? r2 : r1;
     const b = ctx.mathRef.current.sourceB === "ch2" ? r2 : r1;
-    mathArr = new Array(rn).fill(0);
     for (let i = 0; i < rn; i++) {
       const av = a[i] ?? 0, bv = b[i] ?? 0;
       const op = ctx.mathRef.current.op;
@@ -130,26 +131,42 @@ export function renderNow(
       else if (op === "mul") mathArr[i] = av * bv;
       else if (op === "div") mathArr[i] = bv !== 0 ? av / bv : 0;
     }
-  } else {
-    mathArr = new Array(rn).fill(0);
   }
 
   const tSrc = ctx.triggerRef.current.source === "ch2" ? r2 : r1;
-  const tIdx = findTriggerIndex(tSrc, ctx.triggerRef.current, ctx.sampleRateRef.current);
   const sr = ctx.sampleRateRef.current || 4_000_000;
-  const windowSamples = Math.max(100, Math.ceil(ctx.windowMs / 1000 * sr));
-  const alignTrigger = tIdx >= 0 && rn > windowSamples;
+  const fullWindowSamples = Math.max(100, Math.ceil(ctx.windowMs / 1000 * sr));
+  const rollMode = ctx.horizontalRef.current.rollMode;
+  // Live window: short slice for the main plot so the trace reacts quickly.
+  // Roll mode gets an even smaller window so it feels like a streaming scope.
+  const liveWindowMs = rollMode ? Math.min(ctx.windowMs, 50) : Math.min(ctx.windowMs, 200);
+  const liveWindowSamples = Math.max(100, Math.ceil(liveWindowMs / 1000 * sr));
+  if (liveWindowSamples < fullWindowSamples && Math.random() < 0.02) {
+    console.log(`[DSO] live window: ${liveWindowMs}ms / ${liveWindowSamples} samples, full: ${ctx.windowMs}ms / ${fullWindowSamples} samples, roll=${rollMode}`);
+  }
+  const tIdx = rollMode ? -1 : findTriggerIndex(tSrc, ctx.triggerRef.current, ctx.sampleRateRef.current, liveWindowSamples);
+  const alignTrigger = !rollMode && tIdx >= 0 && rn > liveWindowSamples;
+  let triggerTime = -1;
   let s1 = r1, s2 = r2, sM = mathArr;
   let startIdx = 0;
   if (alignTrigger) {
-    const preTrigger = Math.floor(windowSamples * 0.25);
-    const postTrigger = windowSamples - preTrigger;
+    const preTrigger = Math.floor(liveWindowSamples * 0.25);
+    const postTrigger = liveWindowSamples - preTrigger;
     startIdx = Math.max(0, tIdx - preTrigger);
     const endIdx = Math.min(rn, tIdx + postTrigger);
     s1 = r1.slice(startIdx, endIdx);
     s2 = r2.slice(startIdx, endIdx);
     sM = mathArr.slice(startIdx, endIdx);
+    triggerTime = findTriggerTime(tSrc, ctx.triggerRef.current, sr, ctx.windowMs);
+  } else if (rn > liveWindowSamples) {
+    // No trigger found: show the latest live data instead of the oldest full-window data
+    startIdx = rn - liveWindowSamples;
+    s1 = r1.slice(startIdx);
+    s2 = r2.slice(startIdx);
+    sM = mathArr.slice(startIdx);
   }
+  // Keep the full-window start index for the overview plot
+  const fullStartIdx = Math.max(0, rn > fullWindowSamples ? rn - fullWindowSamples : 0);
   const sn = s1.length;
 
   // Phosphor capture
@@ -158,7 +175,7 @@ export function renderNow(
       mode: "time",
       ys1: new Float64Array(s1),
       ys2: new Float64Array(s2),
-      triggerOffset: alignTrigger ? Math.max(0, tIdx - startIdx) : Math.floor(sn * 0.25),
+      triggerOffset: alignTrigger ? (triggerTime / dt - startIdx) : Math.floor(sn * 0.25),
       dt,
     };
     ctx.phosphorTracesRef.current.push(snap);
@@ -188,11 +205,12 @@ export function renderNow(
     }
     plot.setData([xs, ys1Arr, ys2Arr, ysMArr]);
   }
-  // Overview
+  // Overview: always show the full capture window, not just the live slice
   const ov = ctx.overviewPlotRef.current;
   if (ov) {
-    const xsOv = Float64Array.from({ length: rn }, (_, i) => (startIdx + i) * dt);
-    ov.setData([xsOv, new Float64Array(r1), new Float64Array(r2), new Float64Array(mathArr)]);
+    const ovLen = rn - fullStartIdx;
+    const xsOv = Float64Array.from({ length: ovLen }, (_, i) => (fullStartIdx + i) * dt);
+    ov.setData([xsOv, new Float64Array(r1.slice(fullStartIdx)), new Float64Array(r2.slice(fullStartIdx)), new Float64Array(mathArr.slice(fullStartIdx))]);
   }
   // Force scale during acquisition
   const posOffset = (ctx.triggerRef.current.source === "ch2"
@@ -201,9 +219,19 @@ export function renderNow(
   const yRange = ctx.ch1VerticalRef.current.vDiv * 10;
   const yMin = -yRange / 2 + posOffset;
   const yMax = yRange / 2 + posOffset;
-  const dataMax = sn > 0 ? (startIdx + (m - 1) * step) * dt : 0;
-  const delay = (ctx.horizontalRef.current.position / 100) * dataMax;
-  plot.setScale('x', { min: delay, max: dataMax + delay });
+  let dataMin: number;
+  let dataMax: number;
+  if (alignTrigger && triggerTime >= 0) {
+    const windowSize = liveWindowSamples * dt;
+    dataMin = triggerTime - windowSize * 0.25;
+    dataMax = triggerTime + windowSize * 0.75;
+  } else {
+    dataMin = sn > 0 ? startIdx * dt : 0;
+    dataMax = sn > 0 ? (startIdx + (m - 1) * step) * dt : 0;
+  }
+  const range = dataMax - dataMin;
+  const delay = (ctx.horizontalRef.current.position / 100) * range;
+  plot.setScale('x', { min: dataMin + delay, max: dataMax + delay });
   plot.setScale('y', { min: yMin, max: yMax });
 
   // Render-rate diagnostics
@@ -211,7 +239,6 @@ export function renderNow(
   const rrNow = performance.now();
   if (ctx.renderRateT0Ref.current === 0) ctx.renderRateT0Ref.current = rrNow;
   if (rrNow - ctx.renderRateT0Ref.current >= 1000) {
-    // eslint-disable-next-line no-console
     console.log(`[DSO] render rate: ${ctx.renderCountRef.current}/s`);
     ctx.renderCountRef.current = 0;
     ctx.renderRateT0Ref.current = rrNow;
@@ -219,11 +246,9 @@ export function renderNow(
 
   const renderElapsed = performance.now() - renderT0;
   if (renderElapsed > 100) {
-    // eslint-disable-next-line no-console
     console.log(`[DSO] renderNow slow: ${renderElapsed.toFixed(1)}ms (sn=${sn}, doDecimate=${doDecimate})`);
   }
   if (e2eLatency > 200) {
-    // eslint-disable-next-line no-console
     console.log(`[DSO] e2e latency: ${e2eLatency.toFixed(1)}ms (render=${renderElapsed.toFixed(1)}ms)`);
   }
 }

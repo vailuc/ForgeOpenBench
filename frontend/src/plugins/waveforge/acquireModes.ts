@@ -25,20 +25,25 @@ export interface AcquireCtx {
   avgBuf1Ref: { current: number[] };
   avgBuf2Ref: { current: number[] };
   phosphorTracesRef: { current: TraceSnapshot[] };
+  normalMissCountRef: { current: number };
+  lastAutoLevelT0Ref: { current: number };
   // Callbacks
   renderNow: (ch1: number[], ch2: number[], opts?: { phosphorOnly?: boolean }) => void;
   setAcquireMode: (mode: AcquireMode) => void;
+  setTriggerLevel: (level: number) => void;
   stop: (intentional?: boolean) => void;
 }
 
-export function findTriggerIndex(buf: number[], trigger: TriggerState, sampleRate: number): number {
+export function findTriggerIndex(buf: number[], trigger: TriggerState, sampleRate: number, windowMs: number): number {
   if (buf.length < 100) return -1;
   const level = trigger.level;
   const slope = trigger.slope;
   const sr = sampleRate || 4_000_000;
-  const windowSamples = Math.max(500, Math.ceil(sr * 0.001));
+  const windowSamples = Math.max(100, Math.ceil(windowMs / 1000 * sr));
   const checkStart = Math.max(0, buf.length - windowSamples);
-  for (let i = checkStart + 1; i < buf.length; i++) {
+  // Search newest-to-oldest so the scope aligns to the most recent trigger,
+  // not a stale trigger that is still present earlier in the rolling buffer.
+  for (let i = buf.length - 1; i > checkStart; i--) {
     const prev = buf[i - 1], curr = buf[i];
     if (slope === "rise" && prev <= level && curr > level) return i;
     if (slope === "fall" && prev >= level && curr < level) return i;
@@ -47,13 +52,24 @@ export function findTriggerIndex(buf: number[], trigger: TriggerState, sampleRat
   return -1;
 }
 
-export function detectTrigger(buf: number[], trigger: TriggerState, sampleRate: number): boolean {
-  return findTriggerIndex(buf, trigger, sampleRate) >= 0;
+export function detectTrigger(buf: number[], trigger: TriggerState, sampleRate: number, windowMs: number): boolean {
+  return findTriggerIndex(buf, trigger, sampleRate, windowMs) >= 0;
+}
+
+export function findTriggerTime(buf: number[], trigger: TriggerState, sampleRate: number, windowMs: number): number {
+  const tIdx = findTriggerIndex(buf, trigger, sampleRate, windowMs);
+  if (tIdx < 0) return -1;
+  const dt = 1 / (sampleRate || 4_000_000);
+  const prev = buf[tIdx - 1];
+  const curr = buf[tIdx];
+  const level = trigger.level;
+  const fraction = curr !== prev ? (level - prev) / (curr - prev) : 0;
+  return (tIdx - 1 + fraction) * dt;
 }
 
 export function handleAcquireMode(ctx: AcquireCtx): void {
   if (ctx.mode === "single-armed") {
-    if (detectTrigger(ctx.sourceBuf, ctx.triggerRef.current, ctx.sampleRateRef.current)) {
+    if (detectTrigger(ctx.sourceBuf, ctx.triggerRef.current, ctx.sampleRateRef.current, ctx.windowMs)) {
       ctx.setAcquireMode("single-held");
       ctx.renderNow(ctx.ch1Buf, ctx.ch2Buf);
       void ctx.stop(true);
@@ -62,7 +78,7 @@ export function handleAcquireMode(ctx: AcquireCtx): void {
   }
 
   if (ctx.mode === "averaging") {
-    if (detectTrigger(ctx.sourceBuf, ctx.triggerRef.current, ctx.sampleRateRef.current)) {
+    if (detectTrigger(ctx.sourceBuf, ctx.triggerRef.current, ctx.sampleRateRef.current, ctx.windowMs)) {
       const n = ctx.ch1Buf.length;
       if (ctx.avgAccumCountRef.current === 0) {
         ctx.avgBuf1Ref.current = new Array(n).fill(0);
@@ -88,7 +104,7 @@ export function handleAcquireMode(ctx: AcquireCtx): void {
   }
 
   if (ctx.mode === "rolling") {
-    const tIdx = findTriggerIndex(ctx.sourceBuf, ctx.triggerRef.current, ctx.sampleRateRef.current);
+    const tIdx = findTriggerIndex(ctx.sourceBuf, ctx.triggerRef.current, ctx.sampleRateRef.current, ctx.windowMs);
     if (tIdx >= 0) {
       ctx.rollingTriggerTimesRef.current.push(performance.now());
       if (ctx.rollingTriggerTimesRef.current.length > 10) ctx.rollingTriggerTimesRef.current.shift();
@@ -145,10 +161,29 @@ export function handleAcquireMode(ctx: AcquireCtx): void {
       ctx.renderNow(ctx.ch1Buf, ctx.ch2Buf);
       ctx.triggerArmedRef.current = true;
     } else if (tmode === "normal") {
-      const triggered = detectTrigger(ctx.sourceBuf, ctx.triggerRef.current, ctx.sampleRateRef.current);
+      const triggered = detectTrigger(ctx.sourceBuf, ctx.triggerRef.current, ctx.sampleRateRef.current, ctx.windowMs);
       if (triggered && ctx.triggerArmedRef.current) {
         ctx.renderNow(ctx.ch1Buf, ctx.ch2Buf);
         ctx.triggerArmedRef.current = false;
+        ctx.normalMissCountRef.current = 0;
+      } else {
+        ctx.normalMissCountRef.current++;
+      }
+      // Auto-level if the signal hasn't triggered for a while; this prevents
+      // the display from freezing on the old waveform when the user swaps signals.
+      const timeSinceAutoLevel = ctx.nowPerf - ctx.lastAutoLevelT0Ref.current;
+      if (ctx.normalMissCountRef.current > 10 && timeSinceAutoLevel > 1000 && ctx.sourceBuf.length > 100) {
+        let min = ctx.sourceBuf[0], max = ctx.sourceBuf[0];
+        for (const v of ctx.sourceBuf) {
+          if (v < min) min = v;
+          if (v > max) max = v;
+        }
+        const mid = (min + max) / 2;
+        if (Math.abs(mid - ctx.triggerRef.current.level) > 0.05) {
+          ctx.setTriggerLevel(mid);
+        }
+        ctx.normalMissCountRef.current = 0;
+        ctx.lastAutoLevelT0Ref.current = ctx.nowPerf;
       }
       if (!ctx.triggerArmedRef.current && ctx.sourceBuf.length > 0) {
         const last = ctx.sourceBuf[ctx.sourceBuf.length - 1];
@@ -160,7 +195,7 @@ export function handleAcquireMode(ctx: AcquireCtx): void {
         if (slope === "both" && (last < level - margin || last > level + margin)) ctx.triggerArmedRef.current = true;
       }
     } else if (tmode === "smart") {
-      const triggered = detectTrigger(ctx.sourceBuf, ctx.triggerRef.current, ctx.sampleRateRef.current);
+      const triggered = detectTrigger(ctx.sourceBuf, ctx.triggerRef.current, ctx.sampleRateRef.current, ctx.windowMs);
       if (ctx.smartStateRef.current === "auto") {
         ctx.renderNow(ctx.ch1Buf, ctx.ch2Buf);
         if (triggered) {
@@ -175,7 +210,7 @@ export function handleAcquireMode(ctx: AcquireCtx): void {
         }
       } else {
         if (triggered) {
-          ctx.renderNow(ctx.ch1Buf, ctx.ch2Buf, { phosphorOnly: true });
+          ctx.renderNow(ctx.ch1Buf, ctx.ch2Buf);
           ctx.smartMissCountRef.current = 0;
         } else {
           ctx.smartMissCountRef.current++;
