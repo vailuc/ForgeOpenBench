@@ -36,6 +36,12 @@ FOB is the *"now what."*
 
 ![Forge Open Bench UI Collage](docs/collage.png)
 
+### WaveForge DSO
+
+![WaveForge DSO — 4.8 Vpp staircase waveform](docs/images/FOB-Wave-Scope-rev2.png)
+
+![WaveForge DSO — rising exponential on CH1 with measurements](docs/images/FOB-Wave-Scope-rev2b.png)
+
 ---
 
 ## The Hardware You Already Own
