@@ -457,16 +457,28 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       if (!plot || !cursorsEnabledRef.current) return null;
       const a = cursorARef.current;
       const b = cursorBRef.current;
-      const hitRadius = 12;
+      const plotTop = plot.bbox.top;
+      // Top handle: 24x14 px centered on the vertical line, 4px below plotTop
+      const handleW = 24;
+      const handleH = 14;
+      const handleY = plotTop + 4 + handleH / 2;
       if (a) {
         const cx = plot.valToPos(a.x, "x");
         const cy = plot.valToPos(a.y, "y");
-        if (cx != null && cy != null && Math.abs(mx - cx) <= hitRadius && Math.abs(my - cy) <= hitRadius) return "a";
+        if (cx != null) {
+          const nearHandle = Math.abs(mx - cx) <= handleW / 2 && Math.abs(my - handleY) <= handleH / 2;
+          const nearCrosshair = cy != null && Math.abs(mx - cx) <= 12 && Math.abs(my - cy) <= 12;
+          if (nearHandle || nearCrosshair) return "a";
+        }
       }
       if (b) {
         const cx = plot.valToPos(b.x, "x");
         const cy = plot.valToPos(b.y, "y");
-        if (cx != null && cy != null && Math.abs(mx - cx) <= hitRadius && Math.abs(my - cy) <= hitRadius) return "b";
+        if (cx != null) {
+          const nearHandle = Math.abs(mx - cx) <= handleW / 2 && Math.abs(my - handleY) <= handleH / 2;
+          const nearCrosshair = cy != null && Math.abs(mx - cx) <= 12 && Math.abs(my - cy) <= 12;
+          if (nearHandle || nearCrosshair) return "b";
+        }
       }
       return null;
     };

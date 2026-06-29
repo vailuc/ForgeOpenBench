@@ -194,6 +194,32 @@ export interface CursorDeps {
   cursorARef: { current: Cursor | null };
   cursorBRef: { current: Cursor | null };
 }
+function drawCursorHandle(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  label: string,
+  color: string,
+  plotTop: number
+) {
+  const w = 24;
+  const h = 14;
+  const hx = x - w / 2;
+  const hy = plotTop + 4;
+  ctx.fillStyle = color;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.roundRect(hx, hy, w, h, 3);
+  ctx.fill();
+  ctx.fillStyle = "#000000";
+  ctx.font = "bold 10px monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, x, hy + h / 2);
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+}
+
 export function makeDrawCursors(deps: CursorDeps): (u: uPlot) => void {
   return (u) => {
     const a = deps.cursorARef.current;
@@ -228,6 +254,7 @@ export function makeDrawCursors(deps: CursorDeps): (u: uPlot) => void {
         ctx.fillStyle = "#FFD700";
         ctx.font = "10px monospace";
         ctx.fillText("A", x + 2, y - 4);
+        drawCursorHandle(ctx, x, "A", "#FFD700", plotTop);
       }
     }
     if (b) {
@@ -251,6 +278,7 @@ export function makeDrawCursors(deps: CursorDeps): (u: uPlot) => void {
         ctx.fillStyle = "#00FFFF";
         ctx.font = "10px monospace";
         ctx.fillText("B", x + 2, y - 4);
+        drawCursorHandle(ctx, x, "B", "#00FFFF", plotTop);
       }
     }
     ctx.setLineDash([]);
