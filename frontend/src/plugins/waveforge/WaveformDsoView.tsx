@@ -442,6 +442,13 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
     if (!div) return;
     buildPlot(div, odiv ?? undefined);
 
+    // Convert CSS pixels to canvas pixels for hit/drag calculations
+    const getMouseCanvasPos = (e: MouseEvent, canvas: HTMLCanvasElement, rect: DOMRect) => {
+      const mx = (e.clientX - rect.left) * (canvas.width / rect.width);
+      const my = (e.clientY - rect.top) * (canvas.height / rect.height);
+      return { mx, my };
+    };
+
     // Trigger line Y in canvas-relative coords (matches uPlot valToPos)
     const getTriggerLineY = (): number | null => {
       const plot = plotRef.current;
@@ -501,7 +508,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       const canvas = plot.root.querySelector('canvas') as HTMLCanvasElement | null;
       if (!canvas) return;
       const canvasRect = canvas.getBoundingClientRect();
-      const my = e.clientY - canvasRect.top;
+      const { mx, my } = getMouseCanvasPos(e, canvas, canvasRect);
       const triggerY = getTriggerLineY();
       // eslint-disable-next-line no-console
       console.log(`[DSO] trigger click: my=${my.toFixed(1)} triggerY=${triggerY?.toFixed(1) ?? 'null'} diff=${triggerY !== null ? Math.abs(my - triggerY).toFixed(1) : 'N/A'}`);
@@ -514,7 +521,6 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       }
       // Cursor interaction (when cursors enabled)
       if (cursorsEnabledRef.current) {
-        const mx = e.clientX - canvasRect.left;
         const hit = getCursorHit(mx, my);
         if (hit === "a") {
           isDraggingCursorARef.current = true;
@@ -531,7 +537,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
         const x = plot.posToVal(mx, "x");
         const y = plot.posToVal(my, "y");
         // eslint-disable-next-line no-console
-        console.log(`[DSO] cursor place: shift=${e.shiftKey} mx=${mx.toFixed(1)} my=${my.toFixed(1)} x=${x.toFixed(4)} y=${y.toFixed(4)}`);
+        console.log(`[DSO] cursor place: shift=${e.shiftKey} mx=${mx.toFixed(1)} my=${my.toFixed(1)} x=${x.toFixed(4)} y=${y.toFixed(4)} ratio=${(canvas.width / canvasRect.width).toFixed(2)}`);
         if (e.shiftKey) {
           setCursorB({ x, y });
         } else {
@@ -559,7 +565,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
         const canvas = plot.root.querySelector('canvas') as HTMLCanvasElement | null;
         if (!canvas) return;
         const canvasRect = canvas.getBoundingClientRect();
-        const mouseY = e.clientY - canvasRect.top;
+        const { my: mouseY } = getMouseCanvasPos(e, canvas, canvasRect);
         const newLevel = plot.posToVal(mouseY, "y");
         const posOff = (triggerRef.current.source === "ch2"
           ? ch2VerticalRef.current.position * ch2VerticalRef.current.vDiv
@@ -578,8 +584,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
         const canvas = plot.root.querySelector('canvas') as HTMLCanvasElement | null;
         if (!canvas) return;
         const canvasRect = canvas.getBoundingClientRect();
-        const mx = e.clientX - canvasRect.left;
-        const my = e.clientY - canvasRect.top;
+        const { mx, my } = getMouseCanvasPos(e, canvas, canvasRect);
         const x = plot.posToVal(mx, "x");
         const y = plot.posToVal(my, "y");
         if (isDraggingCursorARef.current) setCursorA({ x, y });
@@ -596,8 +601,9 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
           const canvas = plot.root.querySelector('canvas') as HTMLCanvasElement | null;
           if (canvas) {
             const canvasRect = canvas.getBoundingClientRect();
-            my = e.clientY - canvasRect.top;
-            mx = e.clientX - canvasRect.left;
+            const pos = getMouseCanvasPos(e, canvas, canvasRect);
+            my = pos.my;
+            mx = pos.mx;
           }
         }
         const nearTrigger = triggerY !== null && Math.abs(my - triggerY) <= 20;
@@ -691,8 +697,7 @@ export function WaveformDsoView({ transport, isActive, connected, resetting }: P
       const canvas = plot.root.querySelector('canvas') as HTMLCanvasElement | null;
       if (!canvas) return;
       const canvasRect = canvas.getBoundingClientRect();
-      const mx = e.clientX - canvasRect.left;
-      const my = e.clientY - canvasRect.top;
+      const { mx, my } = getMouseCanvasPos(e, canvas, canvasRect);
       const hit = getCursorHit(mx, my);
       if (hit === "a") {
         setCursorA(null);
